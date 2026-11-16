@@ -11,7 +11,7 @@ internal sealed class VirtualMachineSettings : UserControl
     private readonly ComboBox _mode = new() { ItemsSource = new[] { "Этот компьютер", "Чистая виртуальная машина" }, SelectedIndex = 0 };
     private readonly TextBox _template = new() { Text = "benchforge-base-v1" };
     private readonly TextBox _cpus = new() { Text = "4" };
-    private readonly TextBox _memory = new() { Text = "6144" };
+    private readonly TextBox _memory = new() { Text = "3072" };
     private readonly TextBox _disk = new() { Text = "32" };
     private readonly TextBlock _status = Ui.Label("", 12);
     private readonly Button _prepare = Ui.Button("Подготовить шаблон");

@@ -6,7 +6,7 @@ public sealed record VirtualMachineOptions
 {
     public string Template { get; init; } = "benchforge-base-v1";
     public int Cpus { get; init; } = 4;
-    public int MemoryMb { get; init; } = 6144;
+    public int MemoryMb { get; init; } = 3072;
     public int DiskGb { get; init; } = 32;
 
     public void Validate()

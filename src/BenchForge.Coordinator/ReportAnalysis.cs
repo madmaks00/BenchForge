@@ -9,7 +9,8 @@ public sealed record ReportSlice(string Phase, long Rows, int Clients, int? Stag
 public sealed record MetricDescription(string Title, string Unit, MetricDirection Direction, string Explanation);
 public sealed record SeriesAnalysis(string Id, string Engine, TargetKind Target, string Name, double? Median, double? Minimum,
     double? Maximum, double[] Values, int ValidRepeats, int TotalRepeats, long Errors, long Dropped, string MissingReason);
-public sealed record ReportNarrative(string Headline, string Explanation, string[] Limitations, bool Preliminary);
+public sealed record ReportNarrative(string Headline, string Explanation, string[] Limitations, bool Preliminary,
+    ComparisonReview Review, string? ObservedDifference = null);
 public sealed record TrendPoint(double X, double Median, double Minimum, double Maximum, int Repeats);
 public sealed record TrendSeries(string Id, TargetKind Target, string Name, TrendPoint[] Points);
 
@@ -93,7 +94,7 @@ public static class ReportAnalysis
         return text + (unit.Length > 0 ? " " + unit : "");
     }
     public static string Count(long value) => value.ToString("N0", Russian);
-    private static bool Supported(TargetKind target, string phase) => phase == "bulk_load" || phase == "index_build"
+    internal static bool Supported(TargetKind target, string phase) => phase == "bulk_load" || phase == "index_build"
         && target is not (TargetKind.Redis or TargetKind.Valkey or TargetKind.ClickHouse)
         || Enum.TryParse<Scenario>(phase, out var scenario) && Catalog.Get(target).Scenarios.Contains(scenario);
 
@@ -109,7 +110,8 @@ public static class ReportAnalysis
             var all = results.Where(r => r.Engine == engine && r.Target == target && Matches(r, slice)).ToArray();
             var acceptsErrors = metric is AnalysisMetric.ErrorPercent or AnalysisMetric.DropPercent;
             var considered = all.Where(r => !r.Cancelled && (acceptsErrors || Valid(r))).ToArray();
-            var samples = considered.Select(r => Value(r, metric)).Where(x => x.HasValue && double.IsFinite(x.Value) && x.Value >= 0).Select(x => x!.Value).ToArray();
+            var measured = considered.Where(row => Value(row, metric) is { } value && double.IsFinite(value) && value >= 0).ToArray();
+            var samples = measured.Select(row => Value(row, metric)!.Value).ToArray();
             string missing = "";
             if (samples.Length == 0)
                 missing = !Supported(target, slice.Phase) ? "Не поддерживается этим профилем"
@@ -122,7 +124,7 @@ public static class ReportAnalysis
             var name = Catalog.Get(target).Name + (engines.Length > 1 ? " · " + engine : "");
             output.Add(new(engine + ":" + target, engine, target, name, ReportStore.Median(samples.Select(x => (double?)x)),
                 samples.Length == 0 ? null : samples.Min(), samples.Length == 0 ? null : samples.Max(), samples,
-                considered.Select(x => x.Repeat).Distinct().Count(), all.Select(x => x.Repeat).Distinct().Count(),
+                measured.Select(x => x.Repeat).Distinct().Count(), all.Select(x => x.Repeat).Distinct().Count(),
                 all.Sum(x => x.Errors), all.Sum(x => x.Dropped), missing));
         }
         return output.ToArray();
@@ -133,26 +135,14 @@ public static class ReportAnalysis
         var series = Compare(report, results, slice, metric);
         var observed = series.Where(s => s.Median.HasValue).ToArray();
         var matched = results.Where(r => Matches(r, slice)).ToArray();
-        var valid = matched.Where(Valid).ToArray();
-        var notes = new List<string>();
-        var minRepeats = observed.Length == 0 ? 0 : observed.Min(s => s.ValidRepeats);
-        if (minRepeats < 3 && observed.Length > 0)
-            notes.Add(minRepeats == 1 ? "Только один повтор: разброс результатов пока неизвестен. Устойчивость разницы не установлена."
-                : "Меньше трёх повторов: наблюдений мало для оценки устойчивости разницы.");
-        var shortQueries = !SetupPhase(slice.Phase) && valid.Any(r => r.ElapsedSeconds < 60);
-        if (shortQueries) notes.Add("Короткий прогон: меньше минуты на сценарий. Для серьёзного сравнения нужны более длительные прогоны и повторы.");
-        if (report.Status == "running") notes.Add("Эксперимент ещё идёт: показана только уже полученная часть результатов.");
-        if (matched.Any(r => r.Errors > 0 || !r.Verified || r.Cancelled)) notes.Add("Есть ошибки, отменённые или непроверенные результаты. Они сохранены в измерениях. Итоговое сравнение скорости использует проверенные прогоны без ошибок.");
-        if (matched.Sum(r => r.Dropped) > 0) notes.Add("Часть запланированной нагрузки пропущена. Смотрите фактическую скорость вместе с долей пропусков.");
-        static string Family(TargetKind t) => t is TargetKind.Redis or TargetKind.Valkey ? "cache" : t == TargetKind.Sqlite ? "embedded" : t == TargetKind.ClickHouse ? "analytics" : "server";
-        if (series.Select(x => Family(x.Target)).Distinct().Count() > 1)
-            notes.Add("Сопоставляются разные профили хранения: кеш, серверная, встроенная или аналитическая база. Условия подтверждения записи и способы доступа различаются.");
+        var review = ComparisonQuality.Assess(report, results, slice, metric, series);
+        var notes = review.Findings.Select(finding => finding.Message + " " + finding.NextStep).ToList();
         var description = Describe(metric, slice.Phase);
-        if (observed.Length == 0) return new("Для этого показателя пока нет измерений", "Выберите другой сценарий или метрику. Отсутствующие данные не считаются нулевыми.", notes.ToArray(), true);
+        if (observed.Length == 0) return new("Для этого показателя пока нет измерений", "Выберите другой сценарий или метрику. Отсутствующие данные не считаются нулевыми.", notes.ToArray(), true, review);
         if (observed.Length == 1)
-            return new($"{observed[0].Name}: {Number(observed[0].Median, description.Unit)}", "Измерена одна связка при выбранных условиях. Для сравнения нужны результаты ещё одной базы или другого уровня нагрузки.", notes.ToArray(), notes.Count > 0);
+            return new($"{observed[0].Name}: {Number(observed[0].Median, description.Unit)}", "Измерена одна связка при выбранных условиях. Для сравнения нужны результаты ещё одной базы или другого уровня нагрузки.", notes.ToArray(), review.Preliminary, review);
         if (description.Direction == MetricDirection.Context)
-            return new("Ресурсы нужно читать вместе со скоростью", "Разница показана на графике. Меньшее потребление CPU или RAM само по себе не выбирает лучшую базу: проверьте скорость, задержки и ошибки при тех же условиях.", notes.ToArray(), notes.Count > 0);
+            return new("Ресурсы нужно читать вместе со скоростью", "Разница показана на графике. Меньшее потребление CPU или RAM само по себе не выбирает лучшую базу: проверьте скорость, задержки и ошибки при тех же условиях.", notes.ToArray(), review.Preliminary, review);
         var ordered = description.Direction == MetricDirection.Higher ? observed.OrderByDescending(s => s.Median).ToArray() : observed.OrderBy(s => s.Median).ToArray();
         var best = ordered[0]; var other = ordered[1];
         var delta = other.Median > 0 ? description.Direction == MetricDirection.Higher
@@ -167,14 +157,22 @@ public static class ReportAnalysis
             : metric is AnalysisMetric.ErrorPercent or AnalysisMetric.DropPercent ? $"{best.Name}: {Number(best.Median, "%")} против {Number(other.Median, "%")} у {other.Name}"
             : $"{best.Name}: {(slice.Phase == "index_build" ? "время подготовки" : "задержка p99")} на {delta.Value.ToString("N1", Russian)}% меньше, чем у {other.Name}";
         if (observed.Length > 2) notes.Add("Процент в пояснении сравнивает два лучших наблюдавшихся значения выбранного показателя. Остальные базы видны на графике.");
-        if (best.Values.Length > 1 && other.Values.Length > 1)
-            notes.Add(best.Minimum <= other.Maximum && other.Minimum <= best.Maximum
-                ? "Диапазоны повторов пересекаются: наблюдения не показывают устойчивого разделения результатов."
-                : "В этих повторах диапазоны значений не пересекались. Это описание наблюдений, не статистическая гарантия.");
+        if (best.ValidRepeats > 1 && other.ValidRepeats > 1 && !(best.Minimum <= other.Maximum && other.Minimum <= best.Maximum))
+            notes.Add("В этих повторах диапазоны значений не пересекались. Это описание наблюдений, не статистическая гарантия.");
         var explanation = $"{PhaseName(slice.Phase)} · {Count(slice.Rows)} записей · {slice.Clients} клиентов. "
             + (metric is AnalysisMetric.ErrorPercent or AnalysisMetric.DropPercent ? "Сравниваются медианы долей по сохранённым прогонам. " : "Сравниваются медианы корректных повторов в этом отчёте. ")
             + "Это наблюдение данного теста, а не общий рейтинг СУБД.";
-        return new(headline, explanation, notes.ToArray(), minRepeats < 3 || shortQueries || report.Status != "completed");
+        var observation = headline;
+        if (metric is not (AnalysisMetric.ErrorPercent or AnalysisMetric.DropPercent))
+            headline = review.State switch
+            {
+                ComparisonState.ConditionsDiffer => "Сначала проверьте условия сравнения",
+                ComparisonState.Incomplete => "Сравнение пока неполное",
+                ComparisonState.Preliminary => "Пока рано выбирать более быструю базу",
+                ComparisonState.Variable => "Процент нужно читать вместе с разбросом",
+                _ => headline
+            };
+        return new(headline, explanation, notes.ToArray(), review.Preliminary, review, headline == observation ? null : observation);
     }
 
     public static TrendSeries[] Trends(BenchmarkReport report, IReadOnlyList<PhaseResult> results, ReportSlice slice, AnalysisMetric metric, bool byRows)

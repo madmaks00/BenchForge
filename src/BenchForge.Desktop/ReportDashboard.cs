@@ -188,24 +188,44 @@ public sealed class ReportDashboard : UserControl
         var chart = new ComparisonChart(); chart.SetData(series, description);
         var chartHeader = Ui.Stack(5, Ui.Label(description.Title, 18, Ui.Text, true), Ui.Label(description.Unit + "  ·  " + Direction(description), 12));
         ToolTip.SetTip(chartHeader, description.Explanation);
-        var chartPanel = Ui.Card(Ui.Stack(12, chartHeader, chart), 20);
+        var chartPanel = Ui.Card(Ui.Stack(12, chartHeader, chart,
+            Ui.Label("Столбец — медиана. При нескольких повторах точки и линия показывают их разброс.", 12)), 20);
         var matched = _data.Where(r => ReportAnalysis.Matches(r, slice)).ToArray();
-        var notes = Ui.Stack(12, Ui.Label(description.Explanation, 13));
+        var notes = Ui.Stack(12, Ui.Label(description.Explanation, 13), Ui.Label(narrative.Explanation, 13));
         foreach (var note in narrative.Limitations) notes.Children.Add(Ui.Label("• " + note, 13));
+        var repeated = series.Where(item => item.Values.Length > 1).ToArray();
+        if (repeated.Length > 0)
+        {
+            notes.Children.Add(Ui.Rule());
+            notes.Children.Add(Ui.Label("Диапазоны повторов", 14, Ui.Text, true));
+            foreach (var item in repeated)
+            {
+                var spread = ComparisonQuality.SpreadPercent(item);
+                notes.Children.Add(Ui.Label(item.Name + $" · {item.ValidRepeats} повт.\n"
+                    + ReportAnalysis.Number(item.Minimum, description.Unit) + " — " + ReportAnalysis.Number(item.Maximum, description.Unit)
+                    + (spread is { } value && double.IsFinite(value) ? "\nРазброс от медианы: " + ReportAnalysis.Number(value, "%") : ""), 13));
+            }
+            notes.Children.Add(Ui.Label("Разброс = (максимум − минимум) / медиана. Порог предупреждения 10% — подсказка, а не проверка статистической значимости.", 12));
+        }
         var stage = slice.StageNumber is not null && _stage.SelectedItem is StageChoice choice ? choice.Stage : null;
         var condition = $"{ReportAnalysis.Count(slice.Rows)} записей · клиентов: {slice.Clients}" + (stage is null ? "" : $" · {stage.Name}");
         if (stage?.OperationsPerSecond is { } goal) condition += $" · цель {goal:N0} оп./с";
-        var story = Ui.Stack(16, Ui.Badge(narrative.Preliminary ? "Предварительный результат" : "Наблюдение", narrative.Preliminary ? Ui.Amber : Ui.Green),
-            Ui.Label(narrative.Headline, 21, Ui.Text, true), Ui.Label(condition, 13), Ui.Rule(),
-            Stat("Повторов с данными (мин.)", series.Where(s => s.Median.HasValue).Select(s => s.Values.Length).DefaultIfEmpty(0).Min().ToString()),
-            Stat("Ошибок запросов", ReportAnalysis.Count(matched.Sum(r => r.Errors))), Stat("Пропусков", ReportAnalysis.Count(matched.Sum(r => r.Dropped))),
-            new Expander { Header = "Как читать", Content = notes });
+        var story = Ui.Stack(16, Ui.Badge(narrative.Review.Label, narrative.Preliminary ? Ui.Amber : Ui.Green),
+            Ui.Label(narrative.Headline, 21, Ui.Text, true), Ui.Label(condition, 13),
+            Ui.Label(ComparisonQuality.EnvironmentDescription(_report), 12), Ui.Rule(),
+            Stat("Повторов с данными (мин.)", series.Where(s => s.Median.HasValue).Select(s => s.ValidRepeats).DefaultIfEmpty(0).Min().ToString()),
+            Stat("Ошибок запросов", ReportAnalysis.Count(matched.Sum(r => r.Errors))), Stat("Пропусков", ReportAnalysis.Count(matched.Sum(r => r.Dropped))));
+        if (narrative.Review.State is not ComparisonState.Observed)
+            story.Children.Insert(2, Ui.Label(narrative.Review.Summary, 13));
+        if (narrative.ObservedDifference is { } observedDifference)
+            story.Children.Insert(2, Ui.Label("По медианам: " + observedDifference, 13));
         var scheduled = matched.Sum(r => r.PlannedOperations);
         if (stage?.OperationsPerSecond is not null && scheduled > 0)
-            story.Children.Insert(story.Children.Count - 1, Stat("Успешно из запланированных",
+            story.Children.Add(Stat("Успешно из запланированных",
                 ReportAnalysis.Number(matched.Sum(r => r.SuccessfulOperations) * 100d / scheduled, "%")));
         notes.Margin = new Thickness(0, 12, 0, 8);
         var result = Ui.Stack(16, Ui.Columns("2.15*,16,*", chartPanel, Ui.Card(story, 20)));
+        result.Children.Add(new Expander { Header = "Почему такой вывод", Content = notes });
         var operations = new Expander { Header = "Все операции" };
         operations.PropertyChanged += (_, change) =>
         {
@@ -213,9 +233,12 @@ public sealed class ReportDashboard : UserControl
                 operations.Content = BuildOperationTable();
         };
         result.Children.Add(operations);
-        var conditions = Ui.Stack(12, BuildMetricTable(slice), Ui.Label(ReportAnalysis.PhaseExplanation(slice.Phase)), Ui.Label("ОС: " + _report.Environment.GetValueOrDefault("os", "не сохранена") +
-            "\nЛогических процессоров: " + _report.Environment.GetValueOrDefault("logical_cpus", "—") + $"\nЛимит контейнера: {_report.Config.CpuLimit:g} CPU · {_report.Config.MemoryMb:N0} МБ RAM"),
+        var conditions = Ui.Stack(12, BuildMetricTable(slice), Ui.Label(ReportAnalysis.PhaseExplanation(slice.Phase)),
+            Ui.Label(ComparisonQuality.EnvironmentDescription(_report), 14, Ui.Text), Ui.Label("ОС: " + _report.Environment.GetValueOrDefault("os", "не сохранена") +
+            "\nЛогических процессоров: " + _report.Environment.GetValueOrDefault("logical_cpus", "—") + $"\nЛимит серверной БД: {_report.Config.CpuLimit:g} CPU · {_report.Config.MemoryMb:N0} МБ RAM"),
             Ui.Label("SQLite работает в генераторе; Redis/Valkey, SQL и ClickHouse используют разные профили хранения. Модель CPU и диска в этом отчёте не сохранена.", 13));
+        if (_report.Config.VirtualMachine is not null)
+            conditions.Children.Add(Ui.Label("База и генератор находятся в одной VM. Физическое железо и кэши основного компьютера остаются общими.", 13));
         if (_report.Failures.Count > 0 || _report.Warnings.Count > 0) conditions.Children.Add(Ui.Label(string.Join("\n", _report.Failures.Concat(_report.Warnings)), 13, Ui.Amber));
         result.Children.Add(new Expander { Header = "Показатели, условия и замечания", Content = conditions }); conditions.Margin = new Thickness(0, 12, 0, 8);
         return Ui.Scroll(result);

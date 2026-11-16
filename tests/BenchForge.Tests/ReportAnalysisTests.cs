@@ -17,7 +17,8 @@ public sealed class ReportAnalysisTests
     {
         var report = Report(TargetKind.PostgreSql, TargetKind.MySql);
         var result = ReportAnalysis.Explain(report, [Row(TargetKind.PostgreSql, 1245.85), Row(TargetKind.MySql, 1169.01)], Slice, AnalysisMetric.Rate);
-        Assert.Contains("6,6%", result.Headline); Assert.Contains("PostgreSQL", result.Headline);
+        Assert.Contains("рано выбирать", result.Headline);
+        Assert.Contains("6,6%", result.ObservedDifference); Assert.Contains("PostgreSQL", result.ObservedDifference);
         Assert.True(result.Preliminary); Assert.Contains(result.Limitations, n => n.Contains("один повтор"));
         Assert.Contains(result.Limitations, n => n.Contains("Короткий прогон"));
     }
@@ -70,7 +71,7 @@ public sealed class ReportAnalysisTests
         var fastHistogram = new LatencyHistogram(); fastHistogram.RecordMicroseconds(5000); var fast = fastHistogram.Snapshot();
         var result = ReportAnalysis.Explain(Report(TargetKind.MySql, TargetKind.PostgreSql),
             [Row(TargetKind.MySql, 10) with { ServiceLatency = slow }, Row(TargetKind.PostgreSql, 10) with { ServiceLatency = fast }], Slice, AnalysisMetric.P99);
-        Assert.Contains("50,0% меньше", result.Headline);
+        Assert.Contains("50,0% меньше", result.ObservedDifference);
     }
     [Fact] public void ResourceNarrativeDoesNotRankDatabasesByMemory()
     {

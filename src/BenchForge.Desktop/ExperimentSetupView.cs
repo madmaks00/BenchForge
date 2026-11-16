@@ -96,7 +96,8 @@ public sealed class ExperimentSetupView : UserControl
             Grid.SetRow(button, i / 2 * 2);
             grid.Children.Add(button);
         }
-        return Ui.Scroll(Ui.Stack(14, grid, Ui.Label("Серверным базам нужен Docker в режиме Linux-контейнеров.", 13)));
+        return Ui.Scroll(Ui.Stack(14, Ui.Label("Выберите базы для тестирования", 18, Ui.Text, true), grid,
+            Ui.Label("Серверным базам нужен Docker в режиме Linux-контейнеров.", 13)));
     }
 
     private void PaintDatabase(TargetKind target)

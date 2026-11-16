@@ -51,13 +51,15 @@ public sealed class VirtualMachineTemplate(IVmCommandClient? commands = null)
         {
             var setup = Path.Combine(folder, "setup.sh");
             await File.WriteAllTextAsync(setup, Bootstrap.Replace("\r\n", "\n"), token);
+            var cloudInit = Path.Combine(folder, "cloud-init.yaml");
+            await File.WriteAllTextAsync(cloudInit, "#cloud-config\ntimezone: Etc/UTC\n", token);
             log("Загрузка Ubuntu 24.04 и создание шаблона…");
             // Finish creation before honouring cancellation, so the new disk can be cleaned up.
             await _commands.RunAsync(["launch", "24.04", "--name", options.Template, "--cpus", options.Cpus.ToString(),
-                "--memory", options.MemoryMb + "M", "--disk", options.DiskGb + "G", "--timeout", "600"], CancellationToken.None, 900);
+                "--memory", options.MemoryMb + "M", "--disk", options.DiskGb + "G", "--cloud-init", cloudInit, "--timeout", "600"], CancellationToken.None, 900);
             created = true;
             token.ThrowIfCancellationRequested();
-            await _commands.RunAsync(["exec", options.Template, "--", "cloud-init", "status", "--wait"], token, 600);
+            await _commands.RunAsync(["exec", options.Template, "--", "sudo", "-n", "cloud-init", "status", "--wait", "--long"], token, 600);
             await _commands.RunAsync(["transfer", setup, options.Template + ":/home/ubuntu/setup.sh"], token);
             log("Установка Docker и .NET 10 в шаблон…");
             await _commands.RunAsync(["exec", options.Template, "--", "sudo", "-n", "bash", "/home/ubuntu/setup.sh"], token, 1800);

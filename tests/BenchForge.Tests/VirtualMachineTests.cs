@@ -143,6 +143,9 @@ public sealed class VirtualMachineTests
         {
             if (arguments[0] == "launch")
             {
+                var cloudInitIndex = Array.IndexOf(arguments, "--cloud-init");
+                Assert.True(cloudInitIndex > 0);
+                Assert.Equal("#cloud-config\ntimezone: Etc/UTC\n", File.ReadAllText(arguments[cloudInitIndex + 1]));
                 LaunchWasCancellable = token.CanBeCanceled;
                 _created = true;
                 stop.Cancel();

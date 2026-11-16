@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Layout;
@@ -23,17 +24,18 @@ public sealed class ReportDashboard : UserControl
 {
     private BenchmarkReport _report = new();
     private PhaseResult[] _data = [];
-    private readonly TextBlock _title = Ui.Label("Результаты", 28, Ui.Text, true);
-    private readonly TextBlock _meta = Ui.Label("");
-    private readonly ComboBox _phase = new() { MinWidth = 260 };
-    private readonly ComboBox _rows = new() { MinWidth = 140 };
-    private readonly ComboBox _clients = new() { MinWidth = 120 };
-    private readonly ComboBox _stage = new() { MinWidth = 235 };
-    private readonly ComboBox _metric = new() { Width = 225 };
-    private readonly ComboBox _axis = new() { ItemsSource = new[] { "Число клиентов", "Объём данных" }, SelectedIndex = 0, Width = 190 };
+    private readonly TextBlock _title = Ui.Label("Результаты", 16, Ui.Text, true);
+    private readonly TextBlock _targets = Ui.Label("", 13);
+    private readonly TextBlock _meta = Ui.Label("", 12);
+    private readonly ComboBox _phase = new();
+    private readonly ComboBox _rows = new();
+    private readonly ComboBox _clients = new();
+    private readonly ComboBox _stage = new();
+    private readonly ComboBox _metric = new();
+    private readonly ComboBox _axis = new() { ItemsSource = new[] { "Число клиентов", "Объём данных" }, SelectedIndex = 0 };
     private readonly TransitioningContentControl _page = Ui.Presenter();
-    private readonly Control _phaseFilter, _clientsFilter, _stageFilter;
-    private readonly StackPanel _filters = new() { Orientation = Orientation.Horizontal, Spacing = 16, Margin = new Thickness(0, 0, 0, 20) };
+    private readonly Control _phaseFilter, _clientsFilter, _stageFilter, _metricFilter, _axisFilter;
+    private readonly StackPanel _filters;
     private readonly Button[] _nav;
     private readonly ObservableCollection<MeasurementRow> _details = [];
     private readonly DataGrid _table = new() { AutoGenerateColumns = false, IsReadOnly = true, CanUserResizeColumns = true, CanUserSortColumns = false,
@@ -57,21 +59,21 @@ public sealed class ReportDashboard : UserControl
     public ReportDashboard()
     {
         _updating = true;
-        var root = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*") };
-        var back = Ui.Button("←", "quiet", () => LibraryRequested?.Invoke()); back.Width = 36; back.Padding = new Thickness(0);
-        back.Margin = new Thickness(0, 0, 12, 0); back.VerticalAlignment = VerticalAlignment.Top;
-        ToolTip.SetTip(back, "Все отчёты"); Avalonia.Automation.AutomationProperties.SetName(back, "Вернуться к отчётам");
-        var folder = Ui.Button("Папка отчёта", "quiet", () => FolderRequested?.Invoke());
-        var heading = new DockPanel { Margin = new Thickness(0, 0, 0, 22) }; DockPanel.SetDock(folder, Dock.Right); heading.Children.Add(folder);
-        DockPanel.SetDock(back, Dock.Left); heading.Children.Add(back); heading.Children.Add(Ui.Stack(7, _title, _meta)); root.Children.Add(heading);
-        _phaseFilter = Ui.Field("Операция", _phase); _filters.Children.Add(_phaseFilter); _filters.Children.Add(Ui.Field("Записей", _rows));
-        _clientsFilter = Ui.Field("Клиентов", _clients); _filters.Children.Add(_clientsFilter);
-        _stageFilter = Ui.Field("Этап нагрузки", _stage); _filters.Children.Add(_stageFilter);
-        Grid.SetRow(_filters, 1); root.Children.Add(_filters);
-        _nav = new[] { "Сравнение", "Масштабирование", "Измерения" }.Select(x => Ui.Button(x, "quiet")).ToArray();
-        var navigation = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 0, 0, 20) };
-        for (var i = 0; i < _nav.Length; i++) { var index = i; _nav[i].Click += (_, _) => SelectedPage = index; navigation.Children.Add(_nav[i]); }
-        Grid.SetRow(navigation, 2); root.Children.Add(navigation); Grid.SetRow(_page, 3); root.Children.Add(_page);
+        var back = SidebarButton("←  К отчётам", () => LibraryRequested?.Invoke());
+        var folder = SidebarButton("Папка отчёта", () => FolderRequested?.Invoke());
+        _nav = new[] { "Сравнение", "Масштабирование", "Измерения" }
+            .Select((name, index) => SidebarButton(name, () => SelectedPage = index)).ToArray();
+
+        _phaseFilter = SidebarField("Операция", _phase);
+        _clientsFilter = SidebarField("Клиентов", _clients);
+        _stageFilter = SidebarField("Этап нагрузки", _stage);
+        _metricFilter = SidebarField("Показатель", _metric);
+        _axisFilter = SidebarField("По горизонтали", _axis);
+        _filters = Ui.Stack(10, _phaseFilter, SidebarField("Записей", _rows), _clientsFilter, _stageFilter, _metricFilter, _axisFilter);
+
+        var sidebar = Ui.Stack(12, back, Ui.Stack(5, _title, _targets, _meta), Ui.Rule(), Ui.Stack(3, _nav),
+            Ui.Rule(), _filters, folder);
+        var root = Ui.Columns("228,20,*", Ui.Card(Ui.Scroll(sidebar), 12), _page);
         _metric.ItemsSource = new[] { new MetricChoice(AnalysisMetric.Rate, "Скорость"), new MetricChoice(AnalysisMetric.P99, "Задержка p99"),
             new MetricChoice(AnalysisMetric.ServerMemory, "Память базы"), new MetricChoice(AnalysisMetric.ClientMemory, "Память генератора"),
             new MetricChoice(AnalysisMetric.ServerCpu, "CPU базы"), new MetricChoice(AnalysisMetric.ClientCpu, "CPU генератора"), new MetricChoice(AnalysisMetric.GcPause, "Паузы GC"),
@@ -81,6 +83,25 @@ public sealed class ReportDashboard : UserControl
         foreach (var box in new[] { _phase, _rows, _clients, _stage, _metric, _axis }) box.SelectionChanged += (_, _) => { if (!_updating) RefreshNow(); };
         AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(RefreshNow);
         _updating = false; RefreshNow();
+    }
+
+    private static Button SidebarButton(string text, Action action)
+    {
+        var button = Ui.Button(text, "quiet", action);
+        button.HorizontalAlignment = HorizontalAlignment.Stretch;
+        button.HorizontalContentAlignment = HorizontalAlignment.Left;
+        button.Padding = new Thickness(10, 6);
+        button.MinHeight = 32;
+        button.FontSize = 13;
+        return button;
+    }
+
+    private static Control SidebarField(string title, ComboBox input)
+    {
+        input.MinHeight = 34;
+        input.HorizontalAlignment = HorizontalAlignment.Stretch;
+        AutomationProperties.SetName(input, title);
+        return Ui.Stack(5, Ui.Label(title, 12, Ui.Text), input);
     }
     private ReportSlice Slice => SliceFor((_phase.SelectedItem as PhaseChoice)?.Id ?? nameof(Scenario.PointRead));
     private ReportSlice SliceFor(string phase)
@@ -133,9 +154,12 @@ public sealed class ReportDashboard : UserControl
             var phases = ReportAnalysis.KnownPhases.Where(p => _data.Any(r => r.Phase == p)).OrderBy(p => ReportAnalysis.SetupPhase(p) ? 1 : 0).Select(p => new PhaseChoice(p, ReportAnalysis.PhaseName(p))).ToArray();
             if (phases.Length == 0) phases = [new(nameof(Scenario.PointRead), ReportAnalysis.PhaseName(nameof(Scenario.PointRead)))];
             _phase.ItemsSource = phases; _phase.SelectedItem = phases.FirstOrDefault(p => p.Id == previous.Phase) ?? phases[0];
-            _title.Text = string.Join(" / ", _report.Config.Targets.Concat(_data.Select(r => r.Target)).Distinct().Select(t => Catalog.Get(t).Name));
+            var names = _report.Config.Targets.Concat(_data.Select(r => r.Target)).Distinct().Select(t => Catalog.Get(t).Name).ToArray();
+            _title.Text = names.Length == 1 ? names[0] : $"Базы данных · {names.Length}";
+            _targets.IsVisible = names.Length > 1;
+            _targets.Text = string.Join(", ", names);
             var workload = _report.Config.Plan is { } plan ? $"{LoadPlan.Name(plan.Profile)} · {plan.Seconds:0.###} с на операцию" : $"{_report.Config.DurationSeconds:g} с на операцию";
-            _meta.Text = $"{_report.StartedAt.ToLocalTime():dd MMMM yyyy, HH:mm}   ·   {workload}   ·   повторов: {_report.Config.Repeats}";
+            _meta.Text = $"{_report.StartedAt.ToLocalTime():dd MMM yyyy, HH:mm}\n{workload} · повторов: {_report.Config.Repeats}";
             RefreshPage();
         }
         finally { _updating = false; }
@@ -144,10 +168,14 @@ public sealed class ReportDashboard : UserControl
     {
         _phaseFilter.IsVisible = _selectedPage != 2; _filters.IsVisible = _selectedPage != 2 || _all.IsChecked != true;
         var planned = _report.Config.Plan;
-        _nav[1].Content = planned?.Stages.Count > 1 ? "Ход нагрузки" : "Масштабирование";
+        var hasMultipleStages = planned?.Stages.Count > 1;
+        var scalingTitle = hasMultipleStages ? "Ход нагрузки" : "Масштабирование";
+        _nav[1].Content = scalingTitle;
+        AutomationProperties.SetName(_nav[1], scalingTitle);
         _clientsFilter.IsVisible = planned is null;
-        _stageFilter.IsVisible = planned?.Stages.Count > 1 && (_selectedPage == 2 || (_selectedPage == 0 && !ReportAnalysis.SetupPhase(Slice.Phase)));
-        foreach (var control in new[] { _metric, _axis }) if (control.Parent is Panel parent) parent.Children.Remove(control);
+        _stageFilter.IsVisible = hasMultipleStages && (_selectedPage == 2 || (_selectedPage == 0 && !ReportAnalysis.SetupPhase(Slice.Phase)));
+        _metricFilter.IsVisible = _selectedPage == 0 && _data.Length > 0;
+        _axisFilter.IsVisible = _selectedPage == 1 && !hasMultipleStages;
         for (var i = 0; i < _nav.Length; i++) Ui.Select(_nav[i], i == _selectedPage);
         if (_selectedPage == 2) RefreshDetails();
         _page.Content = _selectedPage switch { 1 => BuildScaling(), 2 => _detailPage, _ => BuildComparison() };
@@ -158,10 +186,9 @@ public sealed class ReportDashboard : UserControl
         var slice = Slice; var metric = Metric; var description = ReportAnalysis.Describe(metric, slice.Phase);
         var series = ReportAnalysis.Compare(_report, _data, slice, metric); var narrative = ReportAnalysis.Explain(_report, _data, slice, metric);
         var chart = new ComparisonChart(); chart.SetData(series, description);
-        var chartHeader = new DockPanel(); DockPanel.SetDock(_metric, Dock.Right); chartHeader.Children.Add(_metric);
-        chartHeader.Children.Add(Ui.Stack(5, Ui.Label(description.Title, 18, Ui.Text, true), Ui.Label(description.Unit + "  ·  " + Direction(description), 12)));
+        var chartHeader = Ui.Stack(5, Ui.Label(description.Title, 18, Ui.Text, true), Ui.Label(description.Unit + "  ·  " + Direction(description), 12));
         ToolTip.SetTip(chartHeader, description.Explanation);
-        var chartPanel = Ui.Card(Ui.Stack(16, chartHeader, chart));
+        var chartPanel = Ui.Card(Ui.Stack(12, chartHeader, chart), 20);
         var matched = _data.Where(r => ReportAnalysis.Matches(r, slice)).ToArray();
         var notes = Ui.Stack(12, Ui.Label(description.Explanation, 13));
         foreach (var note in narrative.Limitations) notes.Children.Add(Ui.Label("• " + note, 13));
@@ -172,13 +199,13 @@ public sealed class ReportDashboard : UserControl
             Ui.Label(narrative.Headline, 21, Ui.Text, true), Ui.Label(condition, 13), Ui.Rule(),
             Stat("Повторов с данными (мин.)", series.Where(s => s.Median.HasValue).Select(s => s.Values.Length).DefaultIfEmpty(0).Min().ToString()),
             Stat("Ошибок запросов", ReportAnalysis.Count(matched.Sum(r => r.Errors))), Stat("Пропусков", ReportAnalysis.Count(matched.Sum(r => r.Dropped))),
-            new Expander { Header = "Как понимать результат", Content = notes });
+            new Expander { Header = "Как читать", Content = notes });
         var scheduled = matched.Sum(r => r.PlannedOperations);
         if (stage?.OperationsPerSecond is not null && scheduled > 0)
             story.Children.Insert(story.Children.Count - 1, Stat("Успешно из запланированных",
                 ReportAnalysis.Number(matched.Sum(r => r.SuccessfulOperations) * 100d / scheduled, "%")));
         notes.Margin = new Thickness(0, 12, 0, 8);
-        var result = Ui.Stack(20, Ui.Columns("2.15*,20,*", chartPanel, Ui.Card(story)));
+        var result = Ui.Stack(16, Ui.Columns("2.15*,16,*", chartPanel, Ui.Card(story, 20)));
         var operations = new Expander { Header = "Все операции" };
         operations.PropertyChanged += (_, change) =>
         {
@@ -249,8 +276,8 @@ public sealed class ReportDashboard : UserControl
                 return Ui.Card(Ui.Stack(10, Ui.Label("Выберите операцию с этапами нагрузки", 20, Ui.Text, true), Ui.Label("Загрузка данных и создание индекса измеряются один раз за запуск.")));
             return BuildStageCharts(slice, plan);
         }
-        var heading = new DockPanel(); DockPanel.SetDock(_axis, Dock.Right); heading.Children.Add(_axis);
-        heading.Children.Add(Ui.Stack(5, Ui.Label("Как меняется результат", 20, Ui.Text, true), Ui.Label(byRows ? $"Фиксировано: {slice.Clients} клиентов" : $"Фиксировано: {ReportAnalysis.Count(slice.Rows)} записей", 13)));
+        var heading = Ui.Stack(5, Ui.Label("Как меняется результат", 20, Ui.Text, true),
+            Ui.Label(byRows ? $"Фиксировано: {slice.Clients} клиентов" : $"Фиксировано: {ReportAnalysis.Count(slice.Rows)} записей", 13));
         var rateDescription = ReportAnalysis.Describe(AnalysisMetric.Rate, slice.Phase);
         var rates = ReportAnalysis.Trends(_report, _data, slice, AnalysisMetric.Rate, byRows);
         var speed = new ScalingChart(); speed.SetData(rates, rateDescription, byRows);
@@ -297,11 +324,20 @@ public sealed class ReportDashboard : UserControl
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*,16,Auto"), ClipToBounds = true };
         var tools = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 24, Children = { _all, _resources, _detailCount }, Margin = new Thickness(0, 0, 0, 14) };
         _detailCount.VerticalAlignment = VerticalAlignment.Center; root.Children.Add(tools);
+        // The table has no sorting, so its headers do not need space for a sort icon.
+        _table.Resources["DataGridSortIconMinWidth"] = 0d;
         _table.ItemsSource = _details;
-        foreach (var (header, property) in new[] { ("База", nameof(MeasurementRow.Database)), ("Операция", nameof(MeasurementRow.Operation)),
-            ("Повтор", nameof(MeasurementRow.Repeat)), ("Скорость / время", nameof(MeasurementRow.Rate)), ("p99, мс", nameof(MeasurementRow.P99)),
-            ("Ошибки", nameof(MeasurementRow.Errors)), ("Статус", nameof(MeasurementRow.State)) })
-            _table.Columns.Add(new DataGridTextColumn { Header = header, Binding = new Binding(property) });
+        foreach (var (header, property, width) in new[]
+        {
+            ("База", nameof(MeasurementRow.Database), new DataGridLength(104)),
+            ("Операция", nameof(MeasurementRow.Operation), new DataGridLength(1, DataGridLengthUnitType.Star)),
+            ("Повтор", nameof(MeasurementRow.Repeat), new DataGridLength(56)),
+            ("Скорость / время", nameof(MeasurementRow.Rate), new DataGridLength(116)),
+            ("p99, мс", nameof(MeasurementRow.P99), new DataGridLength(64)),
+            ("Ошибки", nameof(MeasurementRow.Errors), new DataGridLength(64)),
+            ("Статус", nameof(MeasurementRow.State), new DataGridLength(98))
+        })
+            _table.Columns.Add(new DataGridTextColumn { Header = header, Binding = new Binding(property), Width = width, MinWidth = width.IsStar ? 160 : 40 });
         foreach (var (header, property) in new[] { ("Записей", nameof(MeasurementRow.Rows)), ("Клиентов", nameof(MeasurementRow.Clients)) })
         { var column = new DataGridTextColumn { Header = header, Binding = new Binding(property), IsVisible = false }; _conditionColumns.Add(column); _table.Columns.Add(column); }
         foreach (var (header, property) in new[] { ("RAM генератора, МБ", nameof(MeasurementRow.ClientRam)), ("RAM базы, МБ", nameof(MeasurementRow.ServerRam)),
@@ -318,8 +354,9 @@ public sealed class ReportDashboard : UserControl
         _refreshingDetails = true; var selected = (_table.SelectedItem as MeasurementRow)?.Source;
         var slice = _report.Config.Plan is null ? Slice : SliceFor(nameof(Scenario.PointRead));
         var rows = _all.IsChecked == true ? _data : _data.Where(r => r.DatasetRows == slice.Rows && r.Clients == slice.Clients && r.Stage?.Number == slice.StageNumber).ToArray();
+        var showStage = _report.Config.Plan?.Stages.Count > 1;
         _details.Clear();
-        foreach (var r in rows) _details.Add(new(r, Catalog.Get(r.Target).Name, ReportAnalysis.PhaseName(r.Phase) + (r.Stage is { } stage ? " · " + stage.Name : ""), ReportAnalysis.Count(r.DatasetRows), r.Clients.ToString(), r.Repeat.ToString(),
+        foreach (var r in rows) _details.Add(new(r, Catalog.Get(r.Target).Name, ReportAnalysis.PhaseName(r.Phase) + (showStage && r.Stage is { } stage ? " · " + stage.Name : ""), ReportAnalysis.Count(r.DatasetRows), r.Clients.ToString(), r.Repeat.ToString(),
             ReportAnalysis.Number(ReportAnalysis.Rate(r), ReportAnalysis.RateUnit(r.Phase)), ReportAnalysis.Number(r.ServiceLatency?.P99Ms), ReportAnalysis.Count(r.Errors),
             r.Cancelled ? "Остановлен" : !r.Verified ? "Не проверен" : r.Errors > 0 ? "Есть ошибки" : "Проверен", ReportAnalysis.Number(r.Client?.RssSampledMaxMb),
             ReportAnalysis.Number(r.Server?.MemorySampledMaxMb), ReportAnalysis.Number(r.Client?.CpuPercent), ReportAnalysis.Number(r.Server?.CpuMeanPercent),

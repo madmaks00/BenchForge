@@ -24,6 +24,8 @@ public static class ChartPalette
 
 public sealed class ComparisonChart : Control
 {
+    private const int FirstRowTop = 44;
+    private const int RowHeight = 60;
     public static readonly StyledProperty<double> RevealProperty = AvaloniaProperty.Register<ComparisonChart, double>(nameof(Reveal), 0);
     public double Reveal { get => GetValue(RevealProperty); set => SetValue(RevealProperty, value); }
     static ComparisonChart() => AffectsRender<ComparisonChart>(RevealProperty);
@@ -36,7 +38,7 @@ public sealed class ComparisonChart : Control
         AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(() => Reveal = 1, DispatcherPriority.Background);
         PointerMoved += (_, e) =>
         {
-            var row = (int)((e.GetPosition(this).Y - 45) / 80);
+            var row = (int)Math.Floor((e.GetPosition(this).Y - FirstRowTop) / RowHeight);
             if (row < 0 || row >= Series.Length) return;
             var item = Series[row];
             ToolTip.SetTip(this, item.Median is null ? item.Name + ": " + item.MissingReason
@@ -47,7 +49,7 @@ public sealed class ComparisonChart : Control
     }
     public void SetData(SeriesAnalysis[] series, MetricDescription description)
     {
-        Series = series; Description = description; Height = Math.Max(190, series.Length * 80 + 65); InvalidateVisual();
+        Series = series; Description = description; Height = Math.Max(190, FirstRowTop + series.Length * RowHeight + 8); InvalidateVisual();
     }
     public override void Render(DrawingContext context)
     {
@@ -58,15 +60,16 @@ public sealed class ComparisonChart : Control
         var left = Math.Min(145, width * .22); var plot = Math.Max(90, width - left - 165);
         var maximum = Series.Where(x => x.Maximum.HasValue).Select(x => x.Maximum!.Value).DefaultIfEmpty(1).Max();
         if (maximum <= 0) maximum = 1;
-        for (var tick = 0; tick <= 4; tick++)
+        var divisions = plot < 240 ? 2 : 4;
+        for (var tick = 0; tick <= divisions; tick++)
         {
-            var x = left + tick * plot / 4;
+            var x = left + tick * plot / divisions;
             context.DrawLine(new Pen(Ui.B(Ui.Line), 1), new Point(x, 31), new Point(x, Height - 24));
-            ChartPalette.Text(context, ReportAnalysis.Number(maximum * tick / 4, compact: true), x - 9, 7, 10, Ui.Muted);
+            ChartPalette.Text(context, ReportAnalysis.Number(maximum * tick / divisions, compact: true), x - 9, 7, 10, Ui.Muted);
         }
         for (var index = 0; index < Series.Length; index++)
         {
-            var s = Series[index]; var y = 47 + index * 80;
+            var s = Series[index]; var y = FirstRowTop + index * RowHeight;
             ChartPalette.Text(context, s.Name, 0, y + 2, 13, width: left - 12);
             if (s.Median is null)
             {

@@ -89,13 +89,13 @@ public sealed class MainWindow : Window
         WindowDecorationProperties.SetElementRole(help, WindowDecorationsElementRole.User);
         header.Children.Add(help); root.Children.Add(header);
         var rule = Ui.Rule(); Grid.SetRow(rule, 1); root.Children.Add(rule);
-        _presenter.MaxWidth = 1140; _presenter.Margin = new Thickness(40, 22, 40, 24); Grid.SetRow(_presenter, 2); root.Children.Add(_presenter);
+        Grid.SetRow(_presenter, 2); root.Children.Add(_presenter);
         _notice.Margin = new Thickness(40, 0, 40, 14); _notice.IsVisible = false; Grid.SetRow(_notice, 3); root.Children.Add(_notice);
         Content = root;
         _setup.StartRequested += async config => await StartAsync(config); _setup.SaveRequested += async config => await SaveConfigAsync(config);
         _run.StopRequested += Stop;
         _run.ResultsRequested += () => { if (_lastRun is { } report) ShowReport(report, _runFolder); };
-        _dashboard.LibraryRequested += async () => { _reportHost.Content = _library; await _library.RefreshAsync(); };
+        _dashboard.LibraryRequested += async () => { _reportHost.Content = _library; Navigate(2); await _library.RefreshAsync(); };
         _dashboard.FolderRequested += OpenFolder;
         _library.OpenRequested += async path => { try { await OpenSavedReportAsync(path); } catch (Exception e) { Notice(e.Message); } };
         _library.ImportRequested += async () => await ImportReportAsync();
@@ -114,6 +114,9 @@ public sealed class MainWindow : Window
     {
         _selected = Math.Clamp(page, 0, 2); _notice.IsVisible = false;
         for (var i = 0; i < _nav.Length; i++) Ui.Select(_nav[i], i == _selected);
+        var reportOpen = _selected == 2 && _reportHost.Content == _dashboard;
+        _presenter.MaxWidth = reportOpen ? double.PositiveInfinity : 1140;
+        _presenter.Margin = reportOpen ? new Thickness(24, 16, 24, 20) : new Thickness(40, 22, 40, 24);
         _presenter.Content = _selected switch { 1 => _run, 2 => _reportHost, _ => _setup };
     }
     private void ShowReport(BenchmarkReport report, string? folder)

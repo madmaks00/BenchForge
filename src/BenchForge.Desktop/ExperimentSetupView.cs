@@ -1,5 +1,6 @@
 using System.Globalization;
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using BenchForge.Contracts;
@@ -13,10 +14,11 @@ public sealed class ExperimentSetupView : UserControl
     private readonly HashSet<TargetKind> _selected = [TargetKind.Sqlite];
     private readonly Dictionary<string, TextBox> _fields = [];
     private readonly TransitioningContentControl _presenter = Ui.Presenter();
+    private readonly RowDefinition _pageRow = new(GridLength.Auto);
     private readonly Button[] _steps;
     private readonly Control[] _pages;
     private readonly Button _back = Ui.Button("← Назад", "quiet");
-    private readonly Button _next = Ui.Button("Далее →", "primary");
+    private readonly Button _next = Ui.Button("К нагрузке →", "primary");
     private readonly TextBlock _error = Ui.Label("", 13, Ui.Danger);
     private readonly TextBlock _selection = Ui.Label("Выбрано: 1");
     private readonly StackPanel _review = Ui.Stack(20);
@@ -30,28 +32,34 @@ public sealed class ExperimentSetupView : UserControl
 
     public ExperimentSetupView()
     {
-        var root = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto,Auto") };
-        root.Children.Add(Ui.Heading("Новый эксперимент", "Выберите базы, задайте нагрузку и запустите сравнение."));
-        _steps = new[] { "Базы данных", "Нагрузка", "Проверка" }.Select(x => Ui.Button(x, "quiet")).ToArray();
-        var stepBar = Ui.Columns("*,5,*,5,*", _steps);
-        var steps = new Border { Background = Ui.B(Ui.Input), BorderBrush = Ui.B(Ui.Line), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(4), Margin = new Thickness(0, 0, 0, 28), Child = stepBar };
-        Grid.SetRow(steps, 1); root.Children.Add(steps);
-        for (var i = 0; i < _steps.Length; i++) { var index = i; _steps[i].Click += (_, _) => GoTo(index); }
+        var root = new Grid { RowDefinitions = new RowDefinitions { new(GridLength.Auto), _pageRow, new(GridLength.Auto), new(GridLength.Auto) } };
+        _steps = new[] { "Базы данных", "Нагрузка", "Проверка" }
+            .Select((label, index) => Ui.Button(label, "quiet", () => GoTo(index))).ToArray();
+        var stepBar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        foreach (var button in _steps)
+        {
+            button.MinHeight = 32;
+            button.Padding = new Thickness(14, 5);
+            button.FontSize = 13;
+            stepBar.Children.Add(button);
+        }
+        var steps = new Border { HorizontalAlignment = HorizontalAlignment.Left, Background = Ui.B(Ui.Input), BorderBrush = Ui.B(Ui.Line),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(3),
+            Margin = new Thickness(0, 0, 18, 18), Child = stepBar };
+        root.Children.Add(steps);
         _pages = [BuildDatabases(), BuildWorkload(), Ui.Scroll(_review)];
-        Grid.SetRow(_presenter, 2); root.Children.Add(_presenter);
-        _error.Margin = new Thickness(0, 16, 0, 0); _error.IsVisible = false; Grid.SetRow(_error, 3); root.Children.Add(_error);
-        var footer = new DockPanel { Margin = new Thickness(0, 24, 0, 0) };
+        Grid.SetRow(_presenter, 1); root.Children.Add(_presenter);
+        _error.Margin = new Thickness(0, 12, 0, 0); _error.IsVisible = false; Grid.SetRow(_error, 2); root.Children.Add(_error);
+        var footer = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { _back, _next } };
         DockPanel.SetDock(actions, Dock.Right); footer.Children.Add(actions); footer.Children.Add(_selection);
-        _selection.VerticalAlignment = VerticalAlignment.Center; Grid.SetRow(footer, 4); root.Children.Add(footer);
+        _selection.VerticalAlignment = VerticalAlignment.Center; Grid.SetRow(footer, 3); root.Children.Add(footer);
         _back.Click += (_, _) => GoTo(_step - 1);
         _next.Click += (_, _) => { if (_step < 2) GoTo(_step + 1); else { try { StartRequested?.Invoke(ReadConfig()); } catch (Exception e) { Error(e.Message); } } };
         Content = root; GoTo(0);
     }
     private Control BuildDatabases()
     {
-        var panel = Ui.Stack(24, Ui.Stack(7, Ui.Label("Какие базы сравним?", 22, Ui.Text, true), Ui.Label("Можно выбрать несколько. SQLite работает без Docker.")));
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,*"), RowDefinitions = new RowDefinitions("Auto,8,Auto,8,Auto,8,Auto") };
         for (var i = 0; i < Catalog.Targets.Length; i++)
         {
@@ -59,7 +67,7 @@ public sealed class ExperimentSetupView : UserControl
             var tick = Ui.Label("✓", 12, Ui.SelectedText, true);
             tick.HorizontalAlignment = HorizontalAlignment.Center;
             tick.VerticalAlignment = VerticalAlignment.Center;
-            var indicator = new Border { Width = 23, Height = 23, CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1),
+            var indicator = new Border { Width = 22, Height = 22, CornerRadius = new CornerRadius(5), BorderThickness = new Thickness(1),
                 VerticalAlignment = VerticalAlignment.Center, Child = tick };
             var tile = new Border { Width = 42, Height = 42, CornerRadius = new CornerRadius(8), Background = Ui.B(Ui.Raised),
                 Child = BrandIcons.DatabaseMark(target.Kind, 29) };
@@ -88,9 +96,7 @@ public sealed class ExperimentSetupView : UserControl
             Grid.SetRow(button, i / 2 * 2);
             grid.Children.Add(button);
         }
-        panel.Children.Add(grid);
-        panel.Children.Add(Ui.Label("Для серверных баз потребуется запущенный Docker с Linux containers.", 13));
-        return Ui.Scroll(panel);
+        return Ui.Scroll(Ui.Stack(14, grid, Ui.Label("Серверным базам нужен Docker в режиме Linux-контейнеров.", 13)));
     }
 
     private void PaintDatabase(TargetKind target)
@@ -112,7 +118,7 @@ public sealed class ExperimentSetupView : UserControl
             Ui.Columns("*,24,*", Field("warmup", "Прогрев, секунд", "1"), Field("seed", "Начальное значение генератора", "42")),
             Ui.Columns("*,24,*", Field("cpu", "Лимит CPU базы", "2"), Field("memory", "Лимит памяти базы, МБ", "2048")), _hotspot);
         advanced.Margin = new Thickness(0, 20, 0, 8);
-        return Ui.Scroll(Ui.Stack(16, Ui.Label("Выберите тип теста", 22, Ui.Text, true), _load, workload,
+        return Ui.Scroll(Ui.Stack(16, Ui.Label("Тип теста", 17, Ui.Text, true), _load, workload,
             new Expander { Header = "Дополнительные параметры", Content = advanced }));
     }
     private Control Field(string key, string label, string value, string? hint = null)
@@ -126,7 +132,7 @@ public sealed class ExperimentSetupView : UserControl
         _review.Children.Clear(); _checkStatus.Text = ""; var config = ReadConfig(); var revision = ++_reviewRevision;
         var plan = config.Plan!;
         var databaseNames = string.Join("  ·  ", config.Targets.Select(t => Catalog.Get(t).Name));
-        var summary = Ui.Stack(14, Ui.Label("Проверьте настройки", 22, Ui.Text, true), Ui.Label(databaseNames, 17, Ui.Accent, true), Ui.Rule(),
+        var summary = Ui.Stack(14, Ui.Label("Настройки запуска", 17, Ui.Text, true), Ui.Label(databaseNames, 17, Ui.Accent, true), Ui.Rule(),
             SummaryRow("Объём данных", string.Join(" / ", config.DatasetRows.Select(ReportAnalysis.Count)) + " записей"),
             SummaryRow("Тип теста", LoadPlan.Name(plan.Profile)),
             SummaryRow("Каждая операция", $"{plan.Seconds:0.###} с × {config.Repeats} повтор(ов)"),
@@ -171,7 +177,11 @@ public sealed class ExperimentSetupView : UserControl
             if (step == 2) BuildReview();
             _error.IsVisible = false; _step = step;
             for (var i = 0; i < _steps.Length; i++) Ui.Select(_steps[i], i == step);
-            _back.IsVisible = step > 0; _next.Content = step == 2 ? "Запустить эксперимент →" : "Далее →";
+            _pageRow.Height = step == 0 ? GridLength.Auto : GridLength.Star;
+            _back.IsVisible = step > 0;
+            var nextAction = step switch { 0 => "К нагрузке", 1 => "К проверке", _ => "Запустить эксперимент" };
+            _next.Content = nextAction + " →";
+            AutomationProperties.SetName(_next, nextAction);
             _selection.Text = step == 0 ? "Выбрано: " + _selected.Count : step == 1 ? "" : "Результаты сохраняются автоматически";
             _presenter.Content = _pages[step];
         }

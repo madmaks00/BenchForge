@@ -10,6 +10,7 @@ using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Immutable;
 using Avalonia.Styling;
 
 namespace BenchForge.Desktop;
@@ -21,6 +22,8 @@ public static class Ui
     public const string Text = "#f3f0ee", Muted = "#aaa6a4", Accent = "#ff6966", Green = "#81d2af", Amber = "#efc683";
     public const string Input = "#181819", Hover = "#2b2a2c", Selected = "#322326", SelectedLine = "#754346";
     public const string SelectedText = "#ffaca8", Danger = "#ffaca8";
+    // Fade the opacity of the dark hover brush instead of blending with Transparent.
+    private static readonly IBrush QuietBackground = new ImmutableSolidColorBrush(Color.Parse(Hover), 0);
     public static IBrush B(string color) => Brush.Parse(color);
     public static readonly ControlTheme ButtonTheme = new(typeof(Button))
     {
@@ -55,37 +58,38 @@ public static class Ui
         var button = new Button { Content = text, Theme = ButtonTheme, MinHeight = 40, Padding = new Thickness(16, 10), CornerRadius = new CornerRadius(8),
             FontSize = 14, FontWeight = FontWeight.Medium, BorderThickness = new Thickness(1), HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center, Cursor = new Cursor(StandardCursorType.Hand), Transitions = new Transitions {
-                new BrushTransition { Property = TemplatedControl.BackgroundProperty, Duration = TimeSpan.FromMilliseconds(130) },
-                new BrushTransition { Property = TemplatedControl.BorderBrushProperty, Duration = TimeSpan.FromMilliseconds(130) },
-                new DoubleTransition { Property = Visual.OpacityProperty, Duration = TimeSpan.FromMilliseconds(100) } } };
+                new BrushTransition { Property = TemplatedControl.BackgroundProperty, Duration = TimeSpan.FromMilliseconds(100), Easing = new CubicEaseOut() } } };
         button.Classes.Add(tone); Paint(button);
-        button.PointerEntered += (_, _) => Paint(button, true);
-        button.PointerExited += (_, _) => { Paint(button); button.Opacity = button.IsEnabled ? 1 : .4; };
-        button.PointerPressed += (_, _) => { if (button.IsEnabled) button.Opacity = .76; };
-        button.PointerReleased += (_, _) => button.Opacity = button.IsEnabled ? 1 : .4;
-        button.GotFocus += (_, _) => button.BorderBrush = B(Accent);
-        button.LostFocus += (_, _) => Paint(button);
-        button.PropertyChanged += (_, e) => { if (e.Property == InputElement.IsEnabledProperty) button.Opacity = button.IsEnabled ? 1 : .4; };
+        button.PropertyChanged += (_, change) =>
+        {
+            if (change.Property == InputElement.IsPointerOverProperty || change.Property == Avalonia.Controls.Button.IsPressedProperty ||
+                change.Property == InputElement.IsFocusedProperty || change.Property == InputElement.IsEffectivelyEnabledProperty)
+                Paint(button);
+        };
         AutomationProperties.SetName(button, text);
         if (action is not null) button.Click += (_, _) => action(); return button;
     }
-    private static void Paint(Button button, bool hover = false)
+    private static void Paint(Button button)
     {
         var selected = button.Classes.Contains("selected");
         var primary = button.Classes.Contains("primary");
         var quiet = button.Classes.Contains("quiet") || button.Classes.Contains("nav");
         var danger = button.Classes.Contains("danger");
+        var enabled = button.IsEffectivelyEnabled;
+        var hover = enabled && button.IsPointerOver;
+        var pressed = enabled && button.IsPressed;
+        button.Opacity = enabled ? 1 : .4;
+        button.BorderBrush = button.IsFocused ? B(Accent) : selected ? B(SelectedLine) : primary || quiet ? Brushes.Transparent : B(Line);
         if (primary)
         {
-            button.Background = B(hover ? "#ff817c" : Accent);
+            button.Background = B(pressed ? "#e85e5b" : hover ? "#ff7773" : Accent);
             button.Foreground = B("#241415");
-            button.BorderBrush = Brushes.Transparent;
             return;
         }
 
-        button.Background = selected ? B(Selected) : hover ? B(Hover) : quiet ? Brushes.Transparent : B(Surface);
+        button.Background = selected ? B(pressed ? "#291d20" : hover ? "#39282b" : Selected)
+            : pressed ? B(Raised) : hover ? B(Hover) : quiet ? QuietBackground : B(Surface);
         button.Foreground = B(selected ? SelectedText : danger ? Danger : quiet ? Muted : Text);
-        button.BorderBrush = selected ? B(SelectedLine) : quiet ? Brushes.Transparent : B(Line);
     }
     public static void Select(Button button, bool selected)
     { button.Classes.Set("selected", selected); Paint(button); }

@@ -24,6 +24,7 @@ public sealed class ExperimentSetupView : UserControl
     private readonly StackPanel _review = Ui.Stack(20);
     private readonly TextBlock _checkStatus = Ui.Label("");
     private readonly LoadPlanEditor _load = new();
+    private readonly VirtualMachineSettings _environment = new();
     private readonly ComboBox _scenario = new() { ItemsSource = new[] { "Чтение по умолчанию", "Все доступные операции" }.Concat(Enum.GetValues<Scenario>().Select(Catalog.Name)).ToArray(), SelectedIndex = 0 };
     private readonly CheckBox _hotspot = new() { Content = "Чаще обращаться к популярным ключам" };
     private int _step, _reviewRevision;
@@ -121,7 +122,8 @@ public sealed class ExperimentSetupView : UserControl
             Ui.Columns("*,24,*", Field("cpu", "Лимит CPU базы", "2", "Лимит процессора контейнера. SQLite выполняется без этого лимита."), Field("memory", "Лимит памяти базы, МБ", "2048", "Лимит памяти контейнера. SQLite выполняется без этого лимита.")), _hotspot);
         advanced.Margin = new Thickness(0, 20, 0, 8);
         return Ui.Scroll(Ui.Stack(16, _load, workload,
-            new Expander { Header = "Дополнительные параметры", Content = advanced }));
+            new Expander { Header = "Дополнительные параметры", Content = advanced },
+            new Expander { Header = "Окружение тестирования", Content = Ui.Card(_environment, 16) }));
     }
     private Control Field(string key, string label, string value, string? hint = null)
     {
@@ -154,9 +156,12 @@ public sealed class ExperimentSetupView : UserControl
             catch (Exception e) { if (revision == _reviewRevision) { _checkStatus.Text = e.Message; _checkStatus.Foreground = Ui.B(Ui.Amber); } }
             finally { check.IsEnabled = true; }
         };
+        var environmentTitle = config.VirtualMachine is not null ? "Чистая VM на каждый прогон"
+            : config.Targets.All(t => t == TargetKind.Sqlite) ? "SQLite · локальный файл" : "Docker · отдельные тестовые контейнеры";
+        var environmentText = config.VirtualMachine is { } vm ? $"Шаблон {vm.Template}\nМашина: {vm.Cpus} CPU · {vm.MemoryMb:N0} МБ RAM · {vm.DiskGb} ГБ диск"
+            : config.Targets.All(t => t == TargetKind.Sqlite) ? "База работает внутри генератора нагрузки." : $"На каждую серверную базу: {config.CpuLimit:g} CPU, {config.MemoryMb:N0} МБ памяти.";
         var conditions = Ui.Stack(18, Ui.Label("Окружение", 17, Ui.Text, true),
-            Ui.Label(config.Targets.All(t => t == TargetKind.Sqlite) ? "SQLite · локальный файл" : "Docker · отдельные тестовые контейнеры", 14, Ui.Text),
-            Ui.Label(config.Targets.All(t => t == TargetKind.Sqlite) ? "База работает внутри генератора нагрузки." : $"На каждую серверную базу: {config.CpuLimit:g} CPU, {config.MemoryMb:N0} МБ памяти."), check, _checkStatus);
+            Ui.Label(environmentTitle, 14, Ui.Text), Ui.Label(environmentText), check, _checkStatus);
         var save = Ui.Button("Сохранить настройки", "quiet", () => SaveRequested?.Invoke(ReadConfig())); save.HorizontalAlignment = HorizontalAlignment.Left;
         _review.Children.Add(Ui.Columns("1.6*,20,*", Ui.Card(summary), Ui.Card(conditions)));
         var seconds = config.Targets.Sum(target => config.Operations(target).Count) * plan.Seconds * config.Repeats * config.DatasetRows.Count;
@@ -204,7 +209,7 @@ public sealed class ExperimentSetupView : UserControl
             Clients = [plan.PeakClients], Plan = plan, DurationSeconds = plan.Stages[0].Seconds,
             Repeats = Integer("repeats"), PayloadBytes = Integer("payload"), BatchSize = Integer("batch"),
             WarmupSeconds = Decimal("warmup"), Seed = seed, CpuLimit = Decimal("cpu"), MemoryMb = Integer("memory"),
-            Hotspot = _hotspot.IsChecked == true, Scenarios = operations };
+            Hotspot = _hotspot.IsChecked == true, Scenarios = operations, VirtualMachine = _environment.Read() };
         config.Validate(); return config;
     }
     public void SetConfig(BenchmarkConfig config)
@@ -217,6 +222,7 @@ public sealed class ExperimentSetupView : UserControl
             ["cpu"] = config.CpuLimit.ToString(CultureInfo.InvariantCulture), ["memory"] = config.MemoryMb.ToString() };
         foreach (var (key, value) in values) _fields[key].Text = value;
         _load.Apply(config);
+        _environment.Apply(config.VirtualMachine);
         _hotspot.IsChecked = config.Hotspot;
         _scenario.SelectedIndex = config.Scenarios.Count == 1 ? Array.IndexOf(Enum.GetValues<Scenario>(), config.Scenarios[0]) + 2 : config.Plan is null || config.Scenarios.Count > 1 ? 1 : 0;
         GoTo(_step);

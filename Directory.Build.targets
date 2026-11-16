@@ -6,4 +6,10 @@
     </ItemGroup>
     <Copy SourceFiles="@(CSharpWorkerFiles)" DestinationFiles="@(CSharpWorkerFiles->'$(TargetDir)worker/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
+  <Target Name="CopyVirtualMachineAgent" AfterTargets="Build" Condition="'$(MSBuildProjectName)' == 'BenchForge.Desktop'">
+    <ItemGroup>
+      <VirtualMachineAgentFiles Include="$(MSBuildThisFileDirectory)src/BenchForge.Cli/bin/$(Configuration)/$(TargetFramework)/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(VirtualMachineAgentFiles)" DestinationFiles="@(VirtualMachineAgentFiles->'$(TargetDir)vm-agent/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

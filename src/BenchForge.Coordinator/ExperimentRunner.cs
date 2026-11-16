@@ -6,13 +6,20 @@ using BenchForge.Contracts;
 namespace BenchForge.Coordinator;
 
 public sealed record RunUpdate(string Type, string Message = "", PhaseResult? Result = null, int CompletedCases = 0, int TotalCases = 0, string? Folder = null);
-public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHost? workerHost = null)
+public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHost? workerHost = null, IVirtualMachineCaseRunner? virtualMachines = null)
 {
     private readonly IWorkerHost _workerHost = workerHost ?? new WorkerProcess();
+    private readonly IVirtualMachineCaseRunner _virtualMachines = virtualMachines ?? new VirtualMachineCaseRunner();
     private void Log(string text) => update?.Invoke(new("log", text));
-    public static async Task<List<string>> PreflightAsync(BenchmarkConfig config, CancellationToken token)
+    public static async Task<List<string>> PreflightAsync(BenchmarkConfig config, CancellationToken token, IVirtualMachineCaseRunner? virtualMachines = null)
     {
         var problems = new List<string>();
+        if (config.VirtualMachine is { } vm)
+        {
+            try { await (virtualMachines ?? new VirtualMachineCaseRunner()).CheckAsync(vm, token); }
+            catch (Exception error) when (error is not OperationCanceledException) { problems.Add("VM недоступна. " + error.Message); }
+            return problems;
+        }
         try { _ = ProcessUtil.WorkerPath(); } catch (Exception e) { problems.Add(e.Message); }
         if (config.Targets.Any(t => t != TargetKind.Sqlite))
         {
@@ -28,7 +35,7 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
     public async Task<(BenchmarkReport Report, string Folder)> RunAsync(BenchmarkConfig config, string reportsRoot, CancellationToken token)
     {
         config.Validate();
-        var problems = await PreflightAsync(config, token);
+        var problems = await PreflightAsync(config, token, _virtualMachines);
         if (problems.Count > 0) throw new InvalidOperationException(string.Join(Environment.NewLine, problems));
         var report = new BenchmarkReport { Config = config, Environment = new() { ["os"] = RuntimeInformation.OSDescription,
             ["architecture"] = RuntimeInformation.ProcessArchitecture.ToString(), ["runtime"] = RuntimeInformation.FrameworkDescription,
@@ -59,6 +66,48 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                     var load = config.Plan is { } plan ? LoadPlan.Name(plan.Profile) : $"клиентов: {clients}";
                     var label = $"{Catalog.Get(target).Name} · {rows:N0} записей · {load} · повтор {repeat}";
                     Log(label);
+                    if (config.VirtualMachine is not null)
+                    {
+                        try
+                        {
+                            var guest = await _virtualMachines.RunAsync(config, target, rows, clients, caseId, folder, async change =>
+                            {
+                                if (change.Result is { } measured)
+                                {
+                                    if (measured.Target != target || measured.DatasetRows != rows || measured.Repeat != 1 || !MatchesLoad(measured, config.Plan, clients))
+                                        throw new InvalidDataException("Агент VM вернул результаты другого запуска.");
+                                    var result = measured with { Repeat = repeat };
+                                    report.Results.Add(result);
+                                    await ReportStore.SaveAsync(folder, report);
+                                    update?.Invoke(new("result", Result: result, CompletedCases: completed, TotalCases: total));
+                                }
+                                else if (change.Type is "log" or "progress")
+                                    update?.Invoke(change with { CompletedCases = completed, TotalCases = total, Folder = folder });
+                            }, token);
+                            foreach (var (key, metadata) in guest.Engines) report.Engines.Add(key, metadata);
+                            report.Environment["host_os"] = RuntimeInformation.OSDescription;
+                            foreach (var (key, value) in guest.Environment) report.Environment[key] = value;
+                            report.Environment["topology"] = "fresh Linux VM per case cloned from a stopped template; database and worker inside VM; sequential cases";
+                            report.Environment["isolation"] = "clean VM; host cache and physical hardware are shared";
+                            report.Warnings.AddRange(guest.Warnings);
+                            report.Failures.AddRange(guest.Failures.Select(message => label + ": " + message));
+                            if (guest.Status == "cancelled" && !token.IsCancellationRequested)
+                                report.Failures.Add(label + ": агент VM остановил прогон досрочно.");
+                            if (guest.Status is not ("completed" or "completed_with_errors" or "cancelled") && guest.Failures.Count == 0)
+                                report.Failures.Add(label + ": агент VM завершил прогон со статусом " + guest.Status);
+                        }
+                        catch (VirtualMachineCleanupException) { throw; }
+                        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                        catch (Exception error) { report.Failures.Add(label + ": " + error.Message); Log("Ошибка VM: " + error.Message); }
+                        finally
+                        {
+                            completed++;
+                            await ReportStore.SaveAsync(folder, report);
+                            update?.Invoke(new("case_finished", CompletedCases: completed, TotalCases: total));
+                        }
+                        token.ThrowIfCancellationRequested();
+                        continue;
+                    }
                     var owned = new OwnedTarget(target, config, caseId, folder, Log);
                     var resources = new ResourceCollector();
                     long phaseStart = Stopwatch.GetTimestamp();

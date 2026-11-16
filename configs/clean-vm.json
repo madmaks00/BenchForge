@@ -1,0 +1,17 @@
+{
+  "targets": ["sqlite", "postgreSql"],
+  "datasetRows": [1000],
+  "clients": [1],
+  "repeats": 2,
+  "warmupSeconds": 1,
+  "plan": {
+    "profile": "smoke",
+    "stages": [{ "name": "Быстрая проверка", "clients": 1, "seconds": 2 }]
+  },
+  "virtualMachine": {
+    "template": "benchforge-base-v1",
+    "cpus": 4,
+    "memoryMb": 6144,
+    "diskGb": 32
+  }
+}

@@ -67,9 +67,14 @@ public sealed record BenchmarkConfig
     public double CpuLimit { get; init; } = 2;
     public int MemoryMb { get; init; } = 2048;
     public Dictionary<TargetKind, string> ImageOverrides { get; init; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public VirtualMachineOptions? VirtualMachine { get; init; }
 
     public void Validate()
     {
+        VirtualMachine?.Validate();
+        if (VirtualMachine is { } vm && Targets.Any(target => target != TargetKind.Sqlite) && CpuLimit > vm.Cpus)
+            throw new ArgumentException("Лимит CPU базы должен помещаться в число CPU виртуальной машины.");
         if (Targets.Count == 0 || Targets.Distinct().Count() != Targets.Count || Targets.Any(t => !Enum.IsDefined(t)))
             throw new ArgumentException("Выберите СУБД без повторов.");
         if (DatasetRows.Count == 0 || DatasetRows.Count > 16 || DatasetRows.Distinct().Count() != DatasetRows.Count || DatasetRows.Any(n => n is < 100 or > 100_000_000))

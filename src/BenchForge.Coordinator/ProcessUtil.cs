@@ -5,6 +5,32 @@ namespace BenchForge.Coordinator;
 
 public static class ProcessUtil
 {
+    public static string Multipass()
+    {
+        var configured = Environment.GetEnvironmentVariable("BENCHFORGE_MULTIPASS");
+        if (!string.IsNullOrWhiteSpace(configured)) return configured;
+        var path = OperatingSystem.IsWindows()
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Multipass", "bin", "multipass.exe")
+            : "/usr/local/bin/multipass";
+        return File.Exists(path) ? path : "multipass";
+    }
+
+    public static string VmAgentDirectory()
+    {
+        var configured = Environment.GetEnvironmentVariable("BENCHFORGE_VM_AGENT");
+        var candidates = new List<string> { configured ?? "", Path.Combine(AppContext.BaseDirectory, "vm-agent"), AppContext.BaseDirectory };
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        {
+            if (!File.Exists(Path.Combine(directory.FullName, "BenchForge.slnx"))) continue;
+            candidates.Add(Path.Combine(directory.FullName, "src", "BenchForge.Cli", "bin", "Release", "net10.0"));
+            candidates.Add(Path.Combine(directory.FullName, "src", "BenchForge.Cli", "bin", "Debug", "net10.0"));
+            break;
+        }
+        return candidates.FirstOrDefault(path => File.Exists(Path.Combine(path, "BenchForge.Cli.dll")) &&
+            File.Exists(Path.Combine(path, "worker", "BenchForge.Worker.CSharp.dll")))
+            ?? throw new FileNotFoundException("Не найден агент VM. Соберите решение BenchForge.slnx.");
+    }
+
     public static ProcessStartInfo Info(string executable, IEnumerable<string> arguments, IReadOnlyDictionary<string, string>? environment = null)
     {
         var info = new ProcessStartInfo(executable) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,

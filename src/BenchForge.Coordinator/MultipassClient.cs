@@ -8,7 +8,7 @@ namespace BenchForge.Coordinator;
 public interface IVmCommandClient
 {
     Task<string> RunAsync(string[] arguments, CancellationToken token, int timeoutSeconds = 120);
-    Task<int> RunGuestAsync(string[] arguments, Func<RunUpdate, Task> receive, CancellationToken token);
+    Task<int> RunGuestAsync(string[] arguments, Func<RunUpdate, Task> receive, Func<Task> requestCancellation, CancellationToken token);
 }
 
 public sealed class MultipassClient : IVmCommandClient
@@ -20,7 +20,7 @@ public sealed class MultipassClient : IVmCommandClient
         { throw new InvalidOperationException("Установите Multipass версии 1.15 или новее для запуска чистых VM.", error); }
     }
 
-    public async Task<int> RunGuestAsync(string[] arguments, Func<RunUpdate, Task> receive, CancellationToken token)
+    public async Task<int> RunGuestAsync(string[] arguments, Func<RunUpdate, Task> receive, Func<Task> requestCancellation, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         var info = ProcessUtil.Info(ProcessUtil.Multipass(), arguments, StorageEnvironment());
@@ -36,13 +36,7 @@ public sealed class MultipassClient : IVmCommandClient
             var first = await Task.WhenAny(exit, read, cancel);
             if (first == cancel)
             {
-                try
-                {
-                    await process.StandardInput.WriteLineAsync("cancel");
-                    await process.StandardInput.FlushAsync();
-                    process.StandardInput.Close();
-                }
-                catch (IOException) { }
+                await requestCancellation();
                 if (await Task.WhenAny(exit, Task.Delay(TimeSpan.FromSeconds(75))) != exit)
                     process.Kill(entireProcessTree: true);
             }

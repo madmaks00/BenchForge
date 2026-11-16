@@ -45,11 +45,11 @@ public static class ProcessUtil
         var info = Info(executable, arguments, environment);
         info.RedirectStandardInput = true;
         using var process = Process.Start(info) ?? throw new InvalidOperationException("Не удалось запустить процесс.");
-        process.StandardInput.Close();
         var output = process.StandardOutput.ReadToEndAsync(); var errors = process.StandardError.ReadToEndAsync();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         try { await process.WaitForExitAsync(timeout.Token); }
         catch { if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync(CancellationToken.None); throw; }
+        process.StandardInput.Close();
         var text = await output; var error = await errors;
         if (process.ExitCode != 0)
         { var message = string.IsNullOrWhiteSpace(error) ? text : error; throw new InvalidOperationException(message.Length > 2000 ? message[^2000..] : message); }

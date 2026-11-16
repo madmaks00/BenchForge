@@ -1,5 +1,6 @@
 using System.Formats.Tar;
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.Json;
 using BenchForge.Contracts;
 
@@ -57,8 +58,9 @@ public sealed class VirtualMachineCaseRunner(IVmCommandClient? commands = null) 
             await _commands.RunAsync(["transfer", archive, configFile, name + ":" + GuestRoot + "/"], token, 300);
             await _commands.RunAsync(["exec", name, "--", "tar", "-xzf", GuestRoot + "/agent.tar.gz", "-C", GuestRoot + "/agent"], token);
             string? guestFolder = null;
+            var cancelFile = GuestRoot + "/cancel";
             var exit = await _commands.RunGuestAsync(["exec", name, "--", "sudo", "-n", "dotnet", GuestRoot + "/agent/BenchForge.Cli.dll",
-                "--config", GuestRoot + "/config.json", "--reports", GuestRoot + "/reports", "--events"], async update =>
+                "--config", GuestRoot + "/config.json", "--reports", GuestRoot + "/reports", "--events", "--cancel-file", cancelFile], async update =>
             {
                 if (update.Type == "started" && update.Folder is { } folder)
                 {
@@ -67,7 +69,7 @@ public sealed class VirtualMachineCaseRunner(IVmCommandClient? commands = null) 
                     guestFolder = folder;
                 }
                 await receive(update);
-            }, token);
+            }, async () => { await _commands.RunAsync(["exec", name, "--", "touch", cancelFile], CancellationToken.None, 30); }, token);
             if (guestFolder is null)
             {
                 token.ThrowIfCancellationRequested();
@@ -79,9 +81,18 @@ public sealed class VirtualMachineCaseRunner(IVmCommandClient? commands = null) 
             var reportArchive = GuestRoot + "/report.tar.gz";
             await _commands.RunAsync(["exec", name, "--", "sh", "-c", "cd \"$1\" && tar -czf \"$2\" -- report.json resources-*.json", "--", guestFolder, reportArchive], CancellationToken.None, 300);
             var download = Path.Combine(temp, "report.tar.gz");
-            // ASCII encoding prevents Windows console newline conversion from corrupting gzip bytes.
-            var encoded = await _commands.RunAsync(["exec", name, "--", "base64", "-w0", reportArchive], CancellationToken.None, 300);
-            await File.WriteAllBytesAsync(download, Convert.FromBase64String(encoded));
+            try { await _commands.RunAsync(["transfer", name + ":" + reportArchive, download], CancellationToken.None, 300); }
+            catch (InvalidOperationException error) when (OperatingSystem.IsWindows() && File.Exists(download) &&
+                error.Message.Contains("cannot set permissions for local file", StringComparison.Ordinal))
+            {
+                // Multipass can copy all bytes and then fail applying Unix modes on Windows.
+                // Accept that specific error only after checking the downloaded bytes below.
+            }
+            var digest = await _commands.RunAsync(["exec", name, "--", "sha256sum", reportArchive], CancellationToken.None);
+            byte[] actualDigest;
+            await using (var file = File.OpenRead(download)) actualDigest = await SHA256.HashDataAsync(file);
+            if (!string.Equals(Convert.ToHexString(actualDigest), digest.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Архив отчёта VM передан не полностью: контрольная сумма не совпала.");
             await using (var file = File.OpenRead(download))
             await using (var gzip = new GZipStream(file, CompressionMode.Decompress))
                 await TarFile.ExtractToDirectoryAsync(gzip, collected, overwriteFiles: false);

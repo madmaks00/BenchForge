@@ -6,7 +6,17 @@ Console.OutputEncoding = System.Text.Encoding.UTF8;
 var events = args.Contains("--events");
 using var cancellation = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); if (!events) Console.WriteLine("Остановка: текущие операции будут завершены, отчёт сохранён."); };
-if (events) _ = Task.Run(async () =>
+var cancelFileIndex = Array.IndexOf(args, "--cancel-file");
+if (cancelFileIndex >= 0 && cancelFileIndex + 1 < args.Length) _ = Task.Run(async () =>
+{
+    var cancelFile = args[cancelFileIndex + 1];
+    while (!cancellation.IsCancellationRequested)
+    {
+        if (File.Exists(cancelFile)) { cancellation.Cancel(); return; }
+        await Task.Delay(100);
+    }
+});
+else if (events) _ = Task.Run(async () =>
 {
     while (await Console.In.ReadLineAsync() is { } command)
         if (command == "cancel") cancellation.Cancel();

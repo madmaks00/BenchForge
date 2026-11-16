@@ -131,7 +131,7 @@ public sealed class VirtualMachineTests
             };
         }
         private Task<string> Create(string name) { _clone = name; return Task.FromResult(""); }
-        public Task<int> RunGuestAsync(string[] arguments, Func<RunUpdate, Task> receive, CancellationToken token) => throw new NotSupportedException();
+        public Task<int> RunGuestAsync(string[] arguments, Func<RunUpdate, Task> receive, Func<Task> requestCancellation, CancellationToken token) => throw new NotSupportedException();
     }
 
     private sealed class TemplateCancellationCommands(CancellationTokenSource stop) : IVmCommandClient
@@ -159,7 +159,7 @@ public sealed class VirtualMachineTests
                 ? JsonSerializer.Serialize(new { list = _created ? new object[] { new { name = "benchforge-base-v1", state = "Stopped" } } : [] })
                 : "--purge");
         }
-        public Task<int> RunGuestAsync(string[] arguments, Func<RunUpdate, Task> receive, CancellationToken token) => throw new NotSupportedException();
+        public Task<int> RunGuestAsync(string[] arguments, Func<RunUpdate, Task> receive, Func<Task> requestCancellation, CancellationToken token) => throw new NotSupportedException();
     }
 
     private sealed class TestFolder : IDisposable

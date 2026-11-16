@@ -8,7 +8,11 @@
   "extensions": {
     "recommendations": [
       "ms-dotnettools.csdevkit",
-      "avaloniateam.vscode-avalonia"
+      "avaloniateam.vscode-avalonia",
+      "ms-python.python",
+      "rust-lang.rust-analyzer",
+      "golang.go",
+      "redhat.java"
     ]
   }
 }

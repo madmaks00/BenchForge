@@ -1,0 +1,11 @@
+cffi==2.1.1
+cryptography==50.0.2
+dnspython==2.9.2
+psutil==7.2.2
+psycopg-binary==3.3.9
+psycopg==3.3.9
+pycparser==3.12
+pymongo==4.20.0
+PyMySQL==1.2.4
+redis==8.1.0
+tzdata==2026.6

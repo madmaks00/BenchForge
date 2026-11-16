@@ -9,4 +9,44 @@
   <Folder Name="/tests/">
     <Project Path="tests/BenchForge.Tests/BenchForge.Tests.csproj" />
   </Folder>
+  <Folder Name="/workers/">
+    <File Path="workers/install-linux.sh" />
+    <File Path="workers/prepare.ps1" />
+    <File Path="workers/prepare.sh" />
+    <File Path="workers/README.md" />
+  </Folder>
+  <Folder Name="/workers/java/">
+    <File Path="workers/java/pom.xml" />
+    <File Path="workers/java/src/main/java/dev/benchforge/Database.java" />
+    <File Path="workers/java/src/main/java/dev/benchforge/Portable.java" />
+    <File Path="workers/java/src/main/java/dev/benchforge/Worker.java" />
+  </Folder>
+  <Folder Name="/workers/python/">
+    <File Path="workers/python/adapters.py" />
+    <File Path="workers/python/portable.py" />
+    <File Path="workers/python/requirements.lock.txt" />
+    <File Path="workers/python/worker.py" />
+  </Folder>
+  <Folder Name="/workers/rust/">
+    <File Path="workers/rust/Cargo.toml" />
+    <File Path="workers/rust/Cargo.lock" />
+    <File Path="workers/rust/build.rs" />
+    <File Path="workers/rust/src/adapters.rs" />
+    <File Path="workers/rust/src/main.rs" />
+    <File Path="workers/rust/src/portable.rs" />
+  </Folder>
+  <Folder Name="/workers/node/">
+    <File Path="workers/node/adapters.mjs" />
+    <File Path="workers/node/package-lock.json" />
+    <File Path="workers/node/package.json" />
+    <File Path="workers/node/portable.mjs" />
+    <File Path="workers/node/worker.mjs" />
+  </Folder>
+  <Folder Name="/workers/go/">
+    <File Path="workers/go/adapters.go" />
+    <File Path="workers/go/go.mod" />
+    <File Path="workers/go/go.sum" />
+    <File Path="workers/go/main.go" />
+    <File Path="workers/go/portable.go" />
+  </Folder>
 </Solution>

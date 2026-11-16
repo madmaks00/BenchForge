@@ -9,6 +9,7 @@ namespace BenchForge.Coordinator;
 public interface IVirtualMachineCaseRunner
 {
     Task CheckAsync(VirtualMachineOptions options, CancellationToken token);
+    Task CheckEnginesAsync(VirtualMachineOptions options, IReadOnlyCollection<string> engines, CancellationToken token) => Task.CompletedTask;
     Task<BenchmarkReport> RunAsync(BenchmarkConfig config, TargetKind target, long rows, int clients, string caseId,
         string reportFolder, Func<RunUpdate, Task> receive, CancellationToken token);
 }
@@ -20,7 +21,12 @@ public sealed class VirtualMachineCaseRunner(IVmCommandClient? commands = null) 
     private readonly IVmCommandClient _commands = commands ?? new MultipassClient();
     private const string GuestRoot = "/home/ubuntu/benchforge";
 
-    public Task CheckAsync(VirtualMachineOptions options, CancellationToken token) => new VirtualMachineTemplate(_commands).CheckAsync(options, token);
+    public async Task CheckAsync(VirtualMachineOptions options, CancellationToken token)
+    {
+        await new VirtualMachineTemplate(_commands).CheckAsync(options, token);
+        await VirtualMachineWorkers.CheckStorageAsync(options, token);
+    }
+    public Task CheckEnginesAsync(VirtualMachineOptions options, IReadOnlyCollection<string> engines, CancellationToken token) => VirtualMachineWorkers.CheckAsync(options, engines, token);
 
     public async Task<BenchmarkReport> RunAsync(BenchmarkConfig config, TargetKind target, long rows, int clients, string caseId,
         string reportFolder, Func<RunUpdate, Task> receive, CancellationToken token)
@@ -51,7 +57,17 @@ public sealed class VirtualMachineCaseRunner(IVmCommandClient? commands = null) 
             var archive = Path.Combine(temp, "agent.tar.gz");
             await using (var file = File.Create(archive))
             await using (var gzip = new GZipStream(file, CompressionLevel.Fastest))
-                TarFile.CreateFromDirectory(ProcessUtil.VmAgentDirectory(), gzip, includeBaseDirectory: false);
+            {
+                var agent = ProcessUtil.VmAgentDirectory();
+                using var tar = new TarWriter(gzip, leaveOpen: true);
+                foreach (var source in Directory.EnumerateFiles(agent, "*", SearchOption.AllDirectories))
+                {
+                    var relative = Path.GetRelativePath(agent, source).Replace('\\', '/');
+                    // Linux bundles are already prepared in the stopped template.
+                    if (relative.StartsWith("workers/", StringComparison.Ordinal)) continue;
+                    tar.WriteEntry(source, relative);
+                }
+            }
             var guestConfig = config with { VirtualMachine = null, Targets = [target], DatasetRows = [rows], Clients = [clients], Repeats = 1 };
             var configFile = Path.Combine(temp, "config.json");
             await File.WriteAllTextAsync(configFile, JsonSerializer.Serialize(guestConfig, Json.Pretty), token);

@@ -73,7 +73,7 @@ public sealed class ScalingChart : Control
         }
         foreach (var series in _series)
         {
-            var color = ChartPalette.For(series.Target); TrendPoint? previous = null;
+            var color = ChartPalette.ForSeries(series.Id, series.Target, _series.Select(item => item.Id.Split(':')[0]).Distinct().Count() > 1); TrendPoint? previous = null;
             foreach (var point in series.Points)
             {
                 var position = new Point(X(point.X), Y(point.Median));
@@ -92,7 +92,7 @@ public sealed class ScalingChart : Control
         {
             var series = _series[index]; var legendX = 12 + index % legendColumns * 150;
             var legendY = bottom + 43 + index / legendColumns * 22;
-            context.DrawEllipse(ChartPalette.For(series.Target), null, new Point(legendX + 4, legendY), 4, 4);
+            context.DrawEllipse(ChartPalette.ForSeries(series.Id, series.Target, _series.Select(item => item.Id.Split(':')[0]).Distinct().Count() > 1), null, new Point(legendX + 4, legendY), 4, 4);
             ChartPalette.Text(context, series.Name, legendX + 14, legendY - 9, 11, width: 130);
         }
         ChartPalette.Text(context, _description.Unit, left, 0, 10, Ui.Muted);

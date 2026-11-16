@@ -1,0 +1,23 @@
+[package]
+name = "benchforge-worker-rust"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
+postgres = "0.19"
+mysql = "26"
+mongodb = { version = "3.3", features = ["sync"] }
+redis = "0.32"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+url = "2"
+sysinfo = "0.37"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

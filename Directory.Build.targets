@@ -1,4 +1,12 @@
 <Project>
+  <Target Name="CopyNativeWorkers" AfterTargets="Build" BeforeTargets="CopyVirtualMachineAgent"
+          Condition="'$(MSBuildProjectName)' == 'BenchForge.Desktop' Or '$(MSBuildProjectName)' == 'BenchForge.Cli'">
+    <ItemGroup>
+      <NativeWorkerFiles Include="$(MSBuildThisFileDirectory)workers/**/*"
+        Exclude="$(MSBuildThisFileDirectory)workers/node/node_modules/**/*;$(MSBuildThisFileDirectory)workers/**/target/**/*;$(MSBuildThisFileDirectory)workers/**/__pycache__/**/*;$(MSBuildThisFileDirectory)workers/dist/**/.prepare-*/**/*;$(MSBuildThisFileDirectory)workers/dist/**/.old-*/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeWorkerFiles)" DestinationFiles="@(NativeWorkerFiles->'$(TargetDir)workers/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
   <Target Name="CopyCSharpWorkerForLocalRun" AfterTargets="Build"
           Condition="'$(MSBuildProjectName)' == 'BenchForge.Desktop' Or '$(MSBuildProjectName)' == 'BenchForge.Cli'">
     <ItemGroup>
@@ -8,7 +16,8 @@
   </Target>
   <Target Name="CopyVirtualMachineAgent" AfterTargets="Build" Condition="'$(MSBuildProjectName)' == 'BenchForge.Desktop'">
     <ItemGroup>
-      <VirtualMachineAgentFiles Include="$(MSBuildThisFileDirectory)src/BenchForge.Cli/bin/$(Configuration)/$(TargetFramework)/**/*" />
+      <VirtualMachineAgentFiles Include="$(MSBuildThisFileDirectory)src/BenchForge.Cli/bin/$(Configuration)/$(TargetFramework)/**/*"
+        Exclude="$(MSBuildThisFileDirectory)src/BenchForge.Cli/bin/$(Configuration)/$(TargetFramework)/workers/**/*" />
     </ItemGroup>
     <Copy SourceFiles="@(VirtualMachineAgentFiles)" DestinationFiles="@(VirtualMachineAgentFiles->'$(TargetDir)vm-agent/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>

@@ -303,6 +303,13 @@ public sealed class MainWindow : Window
         _reportHost.Content = _library; Navigate(2); await _library.RefreshAsync(); await Snapshot("library");
         ShowReport(report, Path.GetDirectoryName(path));
         for (var page = 0; page < 3; page++) { _dashboard.SelectedPage = page; await Snapshot(new[] { "compare", "scaling", "measurements" }[page]); }
+        if (report.Config.EngineIds.Count > 1)
+        {
+            _dashboard.SelectEngineComparison(true);
+            _dashboard.SelectGraphView(false); await Snapshot("engines");
+            _dashboard.SelectGraphView(true); await Snapshot("engine-scaling");
+            _dashboard.SelectEngineComparison(false);
+        }
         foreach (var metric in new[] { AnalysisMetric.ServerMemory, AnalysisMetric.ErrorPercent })
         { _dashboard.SelectGraphView(false, metric); await Snapshot(metric == AnalysisMetric.ServerMemory ? "memory" : "errors"); }
         _dashboard.SelectGraphView(false); _setup.GoTo(0); ShowReport(report, Path.GetDirectoryName(path));

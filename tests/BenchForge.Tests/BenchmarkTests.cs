@@ -81,10 +81,10 @@ public sealed class DataAndMetricsTests
         graph.Validate();
         Assert.Equal(clients, graph.PeakClients);
     }
-    [Fact] public void CapabilitiesDistinguishDatabaseFamiliesAndPlannedEngines()
+    [Fact] public void CapabilitiesDistinguishDatabaseFamiliesAndNativeEngines()
     {
         Assert.Equal(8, Catalog.Targets.Length); Assert.Equal(6, Engines.All.Length);
-        Assert.Single(Engines.All, e => e.Status == "implemented");
+        Assert.All(Engines.All, e => Assert.Equal("implemented", e.Status));
         Assert.DoesNotContain(Scenario.Aggregate, Catalog.Get(TargetKind.Redis).Scenarios);
         Assert.DoesNotContain(Scenario.Update, Catalog.Get(TargetKind.ClickHouse).Scenarios);
         Assert.Contains(Scenario.BatchInsert, Catalog.Get(TargetKind.ClickHouse).Scenarios);

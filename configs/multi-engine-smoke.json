@@ -1,0 +1,12 @@
+{
+  "engines": ["csharp", "java", "python", "rust", "node", "go"],
+  "targets": ["sqlite"],
+  "datasetRows": [1000],
+  "clients": [1, 2],
+  "repeats": 1,
+  "durationSeconds": 1,
+  "warmupSeconds": 0.2,
+  "payloadBytes": 64,
+  "batchSize": 100,
+  "scenarios": ["pointRead", "mixed", "batchInsert"]
+}

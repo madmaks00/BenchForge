@@ -27,6 +27,9 @@ public static class ComparisonQuality
         var acceptsErrors = metric is AnalysisMetric.ErrorPercent or AnalysisMetric.DropPercent;
         var measured = matched.Where(row => !row.Cancelled && (acceptsErrors || ReportAnalysis.Valid(row)))
             .Where(row => ReportAnalysis.Value(row, metric) is { } value && double.IsFinite(value) && value >= 0).ToArray();
+        if (observed.Select(item => item.Engine).Distinct().Count() > 1)
+            Add("engine_comparison", "Сравниваются реализации языка вместе с драйвером и моделью параллельной работы.",
+                "Результат не измеряет язык отдельно от его библиотек. Смотрите версии, транспорт, число соединений и настройки в метаданных.", false);
 
         if (observed.Length > 0 && observed.Min(item => item.ValidRepeats) < MinimumRepeats)
         {
@@ -49,7 +52,7 @@ public static class ComparisonQuality
                 "Смотрите фактическую скорость вместе с долей пропусков и задержкой с ожиданием.");
         if (series.Any(item => !item.Median.HasValue && ReportAnalysis.Supported(item.Target, slice.Phase)
             && !((metric is AnalysisMetric.ServerMemory or AnalysisMetric.ServerCpu) && item.Target == TargetKind.Sqlite)))
-            Add("missing_series", "Для части выбранных баз нет измерений этого показателя.",
+            Add("missing_series", "Для части выбранных вариантов нет измерений этого показателя.",
                 "Не считайте отсутствующие значения нулём; проверьте измерения и сбор метрик.");
         if (observed.Any(item => item.ValidRepeats < report.Config.Repeats))
             Add("missing_repeats", "По этому показателю сохранено меньше корректных повторов, чем запланировано.",
@@ -64,7 +67,7 @@ public static class ComparisonQuality
                 "Не объединяйте операции в секунду и записи в секунду в одном сравнении.");
         if (measured.Select(row => (row.Stage?.TargetSeconds, row.Stage?.OperationsPerSecond)).Distinct().Count() > 1)
             Add("different_load", "В выбранном этапе сохранены разные длительности или целевые частоты нагрузки.",
-                "Повторите сравнение с одинаковыми настройками этапа для всех баз.");
+                "Повторите сравнение с одинаковыми настройками этапа для всех вариантов.");
 
         foreach (var item in observed)
         {
@@ -80,7 +83,7 @@ public static class ComparisonQuality
             { if (values.Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!.Trim()).Distinct(StringComparer.Ordinal).Count() > 1) changed.Add(name); }
             Check("версия БД", metadata.Select(entry => entry.ServerVersion));
             Check("драйвер", metadata.Select(entry => entry.Driver));
-            Check("среда .NET", metadata.Select(entry => entry.Runtime));
+            Check("среда выполнения", metadata.Select(entry => entry.Runtime));
             foreach (var (key, title) in new[] { ("image_id", "образ БД"), ("cpu_limit", "лимит CPU базы"), ("memory_limit_mb", "лимит RAM базы"),
                 ("vm_cpus", "CPU виртуальной машины"), ("vm_memory_mb", "RAM виртуальной машины") })
                 Check(title, metadata.Select(entry => Normalize(entry.Settings.GetValueOrDefault(key), key != "image_id")));
@@ -123,7 +126,7 @@ public static class ComparisonQuality
                 : Has("few_repeats") ? "Сделайте хотя бы три повтора каждого варианта."
                 : "Есть прогоны короче минуты. Увеличьте измерение до нескольких минут."),
             ComparisonState.Variable => ("Есть разброс", Reason("overlapping_ranges", "repeat_spread")),
-            ComparisonState.SingleSeries => ("Одна серия данных", "Для сравнения добавьте ещё одну базу или выберите график масштабирования."),
+            ComparisonState.SingleSeries => ("Одна серия данных", "Для сравнения добавьте другой вариант или выберите график масштабирования."),
             _ => ("Наблюдение по повторам", "Базовые проверки не выявили ограничений. Это не доказательство статистической значимости.")
         };
         return new(state, label, summary, findings.ToArray(), findings.Any(finding => finding.BlocksConclusion) || observed.Length == 0);

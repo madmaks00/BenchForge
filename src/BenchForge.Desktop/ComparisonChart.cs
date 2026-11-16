@@ -14,6 +14,8 @@ public static class ChartPalette
 {
     public static readonly string[] Colors = ["#f78379", "#81c3eb", "#ddb079", "#86c89d", "#e48dc0", "#79ceca", "#e4cb76", "#b5b6c0"];
     public static IBrush For(TargetKind target) => Brush.Parse(Colors[(int)target % Colors.Length]);
+    public static IBrush ForSeries(string id, TargetKind target, bool byEngine) => byEngine
+        ? Brush.Parse(Colors[Math.Max(0, Array.FindIndex(Engines.All, engine => engine.Id == id.Split(':')[0])) % Colors.Length]) : For(target);
     public static void Text(DrawingContext context, string text, double x, double y, double size = 13, string color = Ui.Text, double width = double.PositiveInfinity)
     {
         var formatted = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, size, Brush.Parse(color));
@@ -77,7 +79,7 @@ public sealed class ComparisonChart : Control
                 ChartPalette.Text(context, s.MissingReason, left, y + 26, 11, Ui.Muted, width - left - 12);
                 continue;
             }
-            var color = ChartPalette.For(s.Target); var valueWidth = s.Median.Value / maximum * plot;
+            var color = ChartPalette.ForSeries(s.Id, s.Target, Series.Select(item => item.Engine).Distinct().Count() > 1); var valueWidth = s.Median.Value / maximum * plot;
             context.FillRectangle(Ui.B(Ui.Raised), new Rect(left, y + 1, plot, 18));
             if (s.Median > 0) context.DrawRectangle(color, null, new Rect(left, y + 1, valueWidth * Math.Clamp(Reveal, 0, 1), 18), 3, 3);
             else context.DrawEllipse(color, null, new Point(left, y + 12), 3, 3);

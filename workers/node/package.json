@@ -1,0 +1,17 @@
+{
+  "name": "benchforge-worker-node",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "mongodb": "6.20.0",
+    "mysql2": "3.15.3",
+    "pg": "8.16.3",
+    "pg-copy-streams": "7.0.0",
+    "redis": "5.9.0"
+  }
+}

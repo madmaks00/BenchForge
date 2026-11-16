@@ -50,7 +50,7 @@ public sealed class RunView : UserControl
     }
     public void Begin(BenchmarkConfig config)
     {
-        _title.Text = "Подготовка эксперимента"; _subtitle.Text = string.Join(" · ", config.Targets.Select(t => Catalog.Get(t).Name));
+        _title.Text = "Подготовка эксперимента"; _subtitle.Text = string.Join(" · ", config.Targets.Select(t => Catalog.Get(t).Name)) + " · " + string.Join(" / ", config.EngineIds.Select(Engines.Name));
         _journal.Text = ""; _latest.Clear(); _recent.Children.Clear(); _errorCount = 0; _errors.Text = "0";
         _stopping = false; _errors.Foreground = Ui.B(Ui.Text);
         _count.Text = "0 / —"; _progress.Value = 0; _progress.IsIndeterminate = true;
@@ -71,7 +71,7 @@ public sealed class RunView : UserControl
         foreach (var result in _latest.Reverse())
         {
             var line = new Grid { ColumnDefinitions = new ColumnDefinitions("150,*,180,105"), Margin = new Thickness(0, 12) };
-            line.Children.Add(Ui.Label(Catalog.Get(result.Target).Name, 14, Ui.Text));
+            line.Children.Add(Ui.Label(Catalog.Get(result.Target).Name + " · " + Engines.Name(result.Engine), 13, Ui.Text));
             var phase = Ui.Label(ReportAnalysis.PhaseName(result.Phase) + (result.Stage is { } stage ? " · " + stage.Name : ""));
             Grid.SetColumn(phase, 1); line.Children.Add(phase);
             var rate = Ui.Label(ReportAnalysis.Number(ReportAnalysis.Rate(result), ReportAnalysis.RateUnit(result.Phase)), 14, Ui.Text); Grid.SetColumn(rate, 2); line.Children.Add(rate);

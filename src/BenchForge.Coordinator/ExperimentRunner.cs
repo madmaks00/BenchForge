@@ -11,16 +11,23 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
     private readonly IWorkerHost _workerHost = workerHost ?? new WorkerProcess();
     private readonly IVirtualMachineCaseRunner _virtualMachines = virtualMachines ?? new VirtualMachineCaseRunner();
     private void Log(string text) => update?.Invoke(new("log", text));
-    public static async Task<List<string>> PreflightAsync(BenchmarkConfig config, CancellationToken token, IVirtualMachineCaseRunner? virtualMachines = null)
+    public static async Task<List<string>> PreflightAsync(BenchmarkConfig config, CancellationToken token, IVirtualMachineCaseRunner? virtualMachines = null, IWorkerHost? workerHost = null)
     {
         var problems = new List<string>();
         if (config.VirtualMachine is { } vm)
         {
-            try { await (virtualMachines ?? new VirtualMachineCaseRunner()).CheckAsync(vm, token); }
+            try
+            {
+                var machines = virtualMachines ?? new VirtualMachineCaseRunner();
+                await machines.CheckAsync(vm, token);
+                await machines.CheckEnginesAsync(vm, config.EngineIds, token);
+            }
             catch (Exception error) when (error is not OperationCanceledException) { problems.Add("VM недоступна. " + error.Message); }
             return problems;
         }
-        try { _ = ProcessUtil.WorkerPath(); } catch (Exception e) { problems.Add(e.Message); }
+        foreach (var engine in config.EngineIds)
+            try { await (workerHost ?? new WorkerProcess()).CheckAsync(engine, token); }
+            catch (Exception e) when (e is not OperationCanceledException) { problems.Add(Engines.Name(engine) + ": " + e.Message); }
         if (config.Targets.Any(t => t != TargetKind.Sqlite))
         {
             try
@@ -35,21 +42,21 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
     public async Task<(BenchmarkReport Report, string Folder)> RunAsync(BenchmarkConfig config, string reportsRoot, CancellationToken token)
     {
         config.Validate();
-        var problems = await PreflightAsync(config, token, _virtualMachines);
+        var problems = await PreflightAsync(config, token, _virtualMachines, _workerHost);
         if (problems.Count > 0) throw new InvalidOperationException(string.Join(Environment.NewLine, problems));
         var report = new BenchmarkReport { Config = config, Environment = new() { ["os"] = RuntimeInformation.OSDescription,
             ["architecture"] = RuntimeInformation.ProcessArchitecture.ToString(), ["runtime"] = RuntimeInformation.FrameworkDescription,
             ["logical_cpus"] = Environment.ProcessorCount.ToString(), ["generator"] = DataGenerator.Version,
             ["histogram"] = "binary128-us-v1: <=0.782% bucket width, integer-us floor; service and end-to-end distributions separately",
             ["resource_semantics"] = "client RSS/working set; Docker RAM excludes inactive file cache on Linux; sampled maxima, CPU 100%=one core; I/O approximate sample deltas",
-            ["topology"] = "one owned fresh database instance and one C# worker process per case; sequential cases",
+            ["topology"] = "one owned fresh database instance and one native language worker process per case; sequential cases; languages use their own drivers and concurrency models",
             ["database_profile"] = "single node; SQL and MongoDB durable acknowledgements; Redis/Valkey memory-only cache; ClickHouse HTTP MergeTree analytics",
             ["measurements"] = "client CPU/GC are per-phase; load rate includes generation, whose time is also recorded; setup and validation excluded from query timing" } };
         var folder = Path.Combine(Path.GetFullPath(reportsRoot), DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss'Z'") + "-" + report.RunId[..8]);
         Directory.CreateDirectory(folder);
         await ReportStore.SaveAsync(folder, report);
         var clientCounts = config.CaseClients();
-        var total = config.Targets.Count * config.DatasetRows.Count * clientCounts.Count * config.Repeats;
+        var total = config.EngineIds.Count * config.Targets.Count * config.DatasetRows.Count * clientCounts.Count * config.Repeats;
         var completed = 0;
         update?.Invoke(new("started", Folder: folder, TotalCases: total));
         try
@@ -58,23 +65,24 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
             {
                 var offset = (repeat - 1) % config.Targets.Count;
                 foreach (var target in config.Targets.Skip(offset).Concat(config.Targets.Take(offset)))
+                foreach (var engine in config.EngineIds.Skip((repeat - 1) % config.EngineIds.Count).Concat(config.EngineIds.Take((repeat - 1) % config.EngineIds.Count)))
                 foreach (var rows in config.DatasetRows)
                 foreach (var clients in clientCounts)
                 {
                     token.ThrowIfCancellationRequested();
                     var caseId = Guid.NewGuid().ToString("N");
                     var load = config.Plan is { } plan ? LoadPlan.Name(plan.Profile) : $"клиентов: {clients}";
-                    var label = $"{Catalog.Get(target).Name} · {rows:N0} записей · {load} · повтор {repeat}";
+                    var label = $"{Catalog.Get(target).Name} · {Engines.Name(engine)} · {rows:N0} записей · {load} · повтор {repeat}";
                     Log(label);
                     if (config.VirtualMachine is not null)
                     {
                         try
                         {
-                            var guest = await _virtualMachines.RunAsync(config, target, rows, clients, caseId, folder, async change =>
+                            var guest = await _virtualMachines.RunAsync(config with { EngineIds = [engine] }, target, rows, clients, caseId, folder, async change =>
                             {
                                 if (change.Result is { } measured)
                                 {
-                                    if (measured.Target != target || measured.DatasetRows != rows || measured.Repeat != 1 || !MatchesLoad(measured, config.Plan, clients))
+                                    if (measured.Engine != engine || measured.Target != target || measured.DatasetRows != rows || measured.Repeat != 1 || !MatchesLoad(measured, config.Plan, clients))
                                         throw new InvalidDataException("Агент VM вернул результаты другого запуска.");
                                     var result = measured with { Repeat = repeat };
                                     report.Results.Add(result);
@@ -114,7 +122,7 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                     try
                     {
                         await owned.StartAsync(token); resources.Start(owned.Container);
-                        var run = new RunCase(caseId, target, rows, clients, repeat, config, owned.Endpoint);
+                        var run = new RunCase(caseId, target, rows, clients, repeat, config, owned.Endpoint, engine);
                         long? phaseEnd = null;
                         await _workerHost.RunAsync(run, async message =>
                         {
@@ -122,6 +130,7 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                             {
                                 case "metadata":
                                     var metadata = message.Data.Deserialize<EngineMetadata>(Json.Options)!;
+                                    if (metadata.Engine != engine) throw new InvalidDataException("Метаданные другого движка.");
                                     metadata.Settings["image_tag"] = target == TargetKind.Sqlite ? "embedded" : config.Image(target);
                                     metadata.Settings["image_id"] = owned.ImageId ?? "embedded";
                                     metadata.Settings["cpu_limit"] = target == TargetKind.Sqlite ? "not isolated: worker process" : config.CpuLimit.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -136,7 +145,7 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                                     phaseEnd = Stopwatch.GetTimestamp(); break;
                                 case "result":
                                     var result = message.Data.Deserialize<PhaseResult>(Json.Options)!;
-                                    if (result.Target != target || result.DatasetRows != rows || result.Repeat != repeat || !MatchesLoad(result, config.Plan, clients))
+                                    if (result.Engine != engine || result.Target != target || result.DatasetRows != rows || result.Repeat != repeat || !MatchesLoad(result, config.Plan, clients))
                                         throw new InvalidDataException("Движок вернул результаты другого запуска.");
                                     if (target != TargetKind.Sqlite) result = result with { Server = resources.Summary(phaseStart, phaseEnd ?? Stopwatch.GetTimestamp()) };
                                     report.Results.Add(result); await ReportStore.SaveAsync(folder, report);

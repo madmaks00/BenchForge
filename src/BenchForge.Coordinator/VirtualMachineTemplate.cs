@@ -38,26 +38,34 @@ public sealed class VirtualMachineTemplate(IVmCommandClient? commands = null)
     {
         options.Validate();
         await _commands.RunAsync(["help", "clone"], token);
-        if (await InstanceAsync(options.Template, token) is not null)
+        var existing = await InstanceAsync(options.Template, token) is not null;
+        if (existing)
         {
             await CheckAsync(options, token);
-            log("Шаблон уже подготовлен.");
-            return;
+            log("Обновление движков в существующем шаблоне…");
         }
         var folder = Path.Combine(Path.GetTempPath(), "benchforge-template-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         var created = false;
+        var started = false;
         try
         {
+            VirtualMachineWorkers.Invalidate(options);
             var setup = Path.Combine(folder, "setup.sh");
             await File.WriteAllTextAsync(setup, Bootstrap.Replace("\r\n", "\n"), token);
             var cloudInit = Path.Combine(folder, "cloud-init.yaml");
             await File.WriteAllTextAsync(cloudInit, "#cloud-config\ntimezone: Etc/UTC\n", token);
-            log("Загрузка Ubuntu 24.04 и создание шаблона…");
+            log(existing ? "Запуск шаблона для обновления…" : "Загрузка Ubuntu 24.04 и создание шаблона…");
             // Finish creation before honouring cancellation, so the new disk can be cleaned up.
+            if (existing)
+                await _commands.RunAsync(["start", options.Template, "--timeout", "300"], CancellationToken.None, 360);
+            else
+            {
             await _commands.RunAsync(["launch", "24.04", "--name", options.Template, "--cpus", options.Cpus.ToString(),
                 "--memory", options.MemoryMb + "M", "--disk", options.DiskGb + "G", "--cloud-init", cloudInit, "--timeout", "600"], CancellationToken.None, 900);
             created = true;
+            }
+            started = true;
             token.ThrowIfCancellationRequested();
             await _commands.RunAsync(["exec", options.Template, "--", "sudo", "-n", "cloud-init", "status", "--wait", "--long"], token, 600);
             await _commands.RunAsync(["transfer", setup, options.Template + ":/home/ubuntu/setup.sh"], token);
@@ -68,16 +76,21 @@ public sealed class VirtualMachineTemplate(IVmCommandClient? commands = null)
                 log("Подготовка образа " + image);
                 await _commands.RunAsync(["exec", options.Template, "--", "sudo", "-n", "docker", "pull", image], token, 1800);
             }
+            await VirtualMachineWorkers.PrepareAsync(_commands, options, folder, log, token);
+            var diskUsage = await _commands.RunAsync(["exec", options.Template, "--", "df", "--output=used", "-B1", "/"], token);
+            var diskUsedBytes = long.Parse(diskUsage.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[^1], System.Globalization.CultureInfo.InvariantCulture);
             await _commands.RunAsync(["exec", options.Template, "--", "sudo", "-n", "sync"], token);
             await _commands.RunAsync(["stop", options.Template], token);
             var manifest = ManifestPath(options.Template);
             Directory.CreateDirectory(Path.GetDirectoryName(manifest)!);
             await File.WriteAllTextAsync(manifest, JsonSerializer.Serialize(options, Json.Pretty), token);
+            await VirtualMachineWorkers.SaveAsync(options, diskUsedBytes, token);
             log("Шаблон подготовлен и выключен.");
         }
         catch
         {
             if (created) await DeleteAsync(options.Template, CancellationToken.None);
+            else if (started) await _commands.RunAsync(["stop", options.Template], CancellationToken.None);
             throw;
         }
         finally { Directory.Delete(folder, recursive: true); }

@@ -5,7 +5,7 @@ namespace BenchForge.Coordinator;
 
 public enum AnalysisMetric { Rate, P99, ServerMemory, ClientMemory, ServerCpu, ClientCpu, GcPause, ErrorPercent, DropPercent, EndToEndP99 }
 public enum MetricDirection { Higher, Lower, Context }
-public sealed record ReportSlice(string Phase, long Rows, int Clients, int? StageNumber = null);
+public sealed record ReportSlice(string Phase, long Rows, int Clients, int? StageNumber = null, string? Engine = null, TargetKind? Target = null);
 public sealed record MetricDescription(string Title, string Unit, MetricDirection Direction, string Explanation);
 public sealed record SeriesAnalysis(string Id, string Engine, TargetKind Target, string Name, double? Median, double? Minimum,
     double? Maximum, double[] Values, int ValidRepeats, int TotalRepeats, long Errors, long Dropped, string MissingReason);
@@ -57,12 +57,12 @@ public static class ReportAnalysis
         AnalysisMetric.ServerMemory => new("Память базы данных", "МБ", MetricDirection.Context,
             "Максимум RAM контейнера среди выборок. Меньшая память сама по себе не означает более быструю базу: кеш тоже использует RAM."),
         AnalysisMetric.ClientMemory => new("Память генератора нагрузки", "МБ", MetricDirection.Context,
-            "Память отдельного C#-движка, который выдаёт запросы. Это ресурсы клиента, не сервера базы."),
+            "Память отдельного движка, который выдаёт запросы. Это ресурсы клиента, не сервера базы."),
         AnalysisMetric.ServerCpu => new("Загрузка CPU базы", "%", MetricDirection.Context,
             "Средняя выборочная загрузка контейнера. 100% соответствует одному логическому ядру; значение может быть больше 100%. Смотрите вместе со скоростью."),
         AnalysisMetric.ClientCpu => new("Загрузка CPU генератора", "%", MetricDirection.Context,
             "CPU процесса, который выдаёт запросы. Высокая загрузка — повод проверить предел генератора; сама по себе она не доказывает причину ограничения."),
-        AnalysisMetric.GcPause => new("Паузы управления памятью C#", "мс", MetricDirection.Context,
+        AnalysisMetric.GcPause => new("Паузы управления памятью движка", "мс", MetricDirection.Context,
             "Суммарная длительность пауз сборщика мусора в генераторе за этап. Это не паузы СУБД и не задержка одного запроса."),
         AnalysisMetric.ErrorPercent => new("Доля ошибочных запросов", "%", MetricDirection.Lower,
             "Неуспешные операции / все выполненные попытки. Ошибочные прогоны здесь показаны, а не исключены из расчёта."),
@@ -100,9 +100,9 @@ public static class ReportAnalysis
 
     public static SeriesAnalysis[] Compare(BenchmarkReport report, IReadOnlyList<PhaseResult> results, ReportSlice slice, AnalysisMetric metric)
     {
-        var engines = results.Select(r => r.Engine).Where(x => !string.IsNullOrEmpty(x)).Distinct().ToArray();
+        string[] engines = slice.Engine is { } selectedEngine ? [selectedEngine] : report.Config.EngineIds.Concat(results.Select(r => r.Engine)).Where(x => !string.IsNullOrEmpty(x)).Distinct().ToArray();
         if (engines.Length == 0) engines = ["csharp"];
-        var targets = report.Config.Targets.Concat(results.Select(r => r.Target)).Distinct().Order().ToArray();
+        var targets = (slice.Target is { } selectedTarget ? new[] { selectedTarget } : report.Config.Targets.Concat(results.Select(r => r.Target)).Distinct().Order().ToArray());
         var output = new List<SeriesAnalysis>();
         foreach (var engine in engines)
         foreach (var target in targets)
@@ -121,7 +121,7 @@ public static class ReportAnalysis
                     : (metric is AnalysisMetric.ServerMemory or AnalysisMetric.ServerCpu) && target == TargetKind.Sqlite ? "SQLite работает внутри генератора"
                     : metric is AnalysisMetric.ServerMemory or AnalysisMetric.ServerCpu ? "Нет выборок ресурсов за этот этап"
                     : SetupPhase(slice.Phase) ? "Не измеряется на этапе подготовки" : "Показатель не был сохранён";
-            var name = Catalog.Get(target).Name + (engines.Length > 1 ? " · " + engine : "");
+            var name = slice.Target is not null && engines.Length > 1 ? Engines.Name(engine) : Catalog.Get(target).Name + (engines.Length > 1 ? " · " + Engines.Name(engine) : "");
             output.Add(new(engine + ":" + target, engine, target, name, ReportStore.Median(samples.Select(x => (double?)x)),
                 samples.Length == 0 ? null : samples.Min(), samples.Length == 0 ? null : samples.Max(), samples,
                 measured.Select(x => x.Repeat).Distinct().Count(), all.Select(x => x.Repeat).Distinct().Count(),
@@ -133,6 +133,7 @@ public static class ReportAnalysis
     public static ReportNarrative Explain(BenchmarkReport report, IReadOnlyList<PhaseResult> results, ReportSlice slice, AnalysisMetric metric)
     {
         var series = Compare(report, results, slice, metric);
+        var comparingEngines = slice.Target is not null && series.Select(item => item.Engine).Distinct().Count() > 1;
         var observed = series.Where(s => s.Median.HasValue).ToArray();
         var matched = results.Where(r => Matches(r, slice)).ToArray();
         var review = ComparisonQuality.Assess(report, results, slice, metric, series);
@@ -140,7 +141,7 @@ public static class ReportAnalysis
         var description = Describe(metric, slice.Phase);
         if (observed.Length == 0) return new("Для этого показателя пока нет измерений", "Выберите другой сценарий или метрику. Отсутствующие данные не считаются нулевыми.", notes.ToArray(), true, review);
         if (observed.Length == 1)
-            return new($"{observed[0].Name}: {Number(observed[0].Median, description.Unit)}", "Измерена одна связка при выбранных условиях. Для сравнения нужны результаты ещё одной базы или другого уровня нагрузки.", notes.ToArray(), review.Preliminary, review);
+            return new($"{observed[0].Name}: {Number(observed[0].Median, description.Unit)}", "Измерена одна связка при выбранных условиях. Для сравнения нужны результаты другого варианта или уровня нагрузки.", notes.ToArray(), review.Preliminary, review);
         if (description.Direction == MetricDirection.Context)
             return new("Ресурсы нужно читать вместе со скоростью", "Разница показана на графике. Меньшее потребление CPU или RAM само по себе не выбирает лучшую базу: проверьте скорость, задержки и ошибки при тех же условиях.", notes.ToArray(), review.Preliminary, review);
         var ordered = description.Direction == MetricDirection.Higher ? observed.OrderByDescending(s => s.Median).ToArray() : observed.OrderBy(s => s.Median).ToArray();
@@ -151,24 +152,24 @@ public static class ReportAnalysis
             ? metric == AnalysisMetric.ErrorPercent
                 ? matched.All(r => r.Errors == 0) ? "В показанных прогонах ошибок нет" : "Медиана — 0%, но в отдельных повторах есть ошибки"
                 : matched.All(r => r.Dropped == 0) ? "В показанных прогонах пропусков нет" : "Медиана — 0%, но в отдельных повторах есть пропуски"
-            : delta is null ? $"На графике — наблюдавшиеся значения {observed.Length} баз"
+            : delta is null ? $"На графике — наблюдавшиеся значения {observed.Length} вариантов"
             : delta < .05 ? $"Разница между {best.Name} и {other.Name} меньше 0,1%"
             : description.Direction == MetricDirection.Higher ? $"{best.Name}: на {delta.Value.ToString("N1", Russian)}% больше за секунду, чем {other.Name}"
             : metric is AnalysisMetric.ErrorPercent or AnalysisMetric.DropPercent ? $"{best.Name}: {Number(best.Median, "%")} против {Number(other.Median, "%")} у {other.Name}"
             : $"{best.Name}: {(slice.Phase == "index_build" ? "время подготовки" : "задержка p99")} на {delta.Value.ToString("N1", Russian)}% меньше, чем у {other.Name}";
-        if (observed.Length > 2) notes.Add("Процент в пояснении сравнивает два лучших наблюдавшихся значения выбранного показателя. Остальные базы видны на графике.");
+        if (observed.Length > 2) notes.Add("Процент в пояснении сравнивает два лучших наблюдавшихся значения выбранного показателя. Остальные варианты видны на графике.");
         if (best.ValidRepeats > 1 && other.ValidRepeats > 1 && !(best.Minimum <= other.Maximum && other.Minimum <= best.Maximum))
             notes.Add("В этих повторах диапазоны значений не пересекались. Это описание наблюдений, не статистическая гарантия.");
         var explanation = $"{PhaseName(slice.Phase)} · {Count(slice.Rows)} записей · {slice.Clients} клиентов. "
             + (metric is AnalysisMetric.ErrorPercent or AnalysisMetric.DropPercent ? "Сравниваются медианы долей по сохранённым прогонам. " : "Сравниваются медианы корректных повторов в этом отчёте. ")
-            + "Это наблюдение данного теста, а не общий рейтинг СУБД.";
+            + (comparingEngines ? "Это наблюдение данного теста, а не общий рейтинг языков." : "Это наблюдение данного теста, а не общий рейтинг СУБД.");
         var observation = headline;
         if (metric is not (AnalysisMetric.ErrorPercent or AnalysisMetric.DropPercent))
             headline = review.State switch
             {
                 ComparisonState.ConditionsDiffer => "Сначала проверьте условия сравнения",
                 ComparisonState.Incomplete => "Сравнение пока неполное",
-                ComparisonState.Preliminary => "Пока рано выбирать более быструю базу",
+                ComparisonState.Preliminary => comparingEngines ? "Пока рано выбирать более быстрый движок" : "Пока рано выбирать более быструю базу",
                 ComparisonState.Variable => "Процент нужно читать вместе с разбросом",
                 _ => headline
             };
@@ -178,17 +179,19 @@ public static class ReportAnalysis
     public static TrendSeries[] Trends(BenchmarkReport report, IReadOnlyList<PhaseResult> results, ReportSlice slice, AnalysisMetric metric, bool byRows)
     {
         var eligible = results.Where(r => Valid(r) && r.Phase == slice.Phase && r.Stage?.Number == slice.StageNumber &&
-            (byRows ? r.Clients == slice.Clients : r.DatasetRows == slice.Rows)).ToArray();
+            IdentityMatches(r, slice) && (byRows ? r.Clients == slice.Clients : r.DatasetRows == slice.Rows)).ToArray();
         return GroupTrend(eligible, metric, row => byRows ? row.DatasetRows : row.Clients);
     }
 
     public static bool Matches(PhaseResult result, ReportSlice slice) => result.Phase == slice.Phase && result.DatasetRows == slice.Rows &&
-        result.Clients == slice.Clients && result.Stage?.Number == slice.StageNumber;
+        result.Clients == slice.Clients && result.Stage?.Number == slice.StageNumber && IdentityMatches(result, slice);
+
+    public static bool IdentityMatches(PhaseResult result, ReportSlice slice) => (slice.Engine is null || result.Engine == slice.Engine) && (slice.Target is null || result.Target == slice.Target);
 
     public static TrendSeries[] StageTrends(IReadOnlyList<PhaseResult> results, ReportSlice slice, AnalysisMetric metric)
     {
         // Include measured overload (including zero throughput). Comparison still requires verified results.
-        var measured = results.Where(row => row.Stage is not null && row.Phase == slice.Phase && row.DatasetRows == slice.Rows && !row.Cancelled).ToArray();
+        var measured = results.Where(row => row.Stage is not null && row.Phase == slice.Phase && row.DatasetRows == slice.Rows && !row.Cancelled && IdentityMatches(row, slice)).ToArray();
         return GroupTrend(measured, metric, row => row.Stage!.Number);
     }
 
@@ -202,7 +205,7 @@ public static class ReportAnalysis
                 var values = g.Select(r => Value(r, metric)).Where(x => x.HasValue && double.IsFinite(x.Value) && x.Value >= 0).Select(x => x!.Value).ToArray();
                 return values.Length == 0 ? null : new TrendPoint(g.Key, ReportStore.Median(values.Select(x => (double?)x))!.Value, values.Min(), values.Max(), g.Select(r => r.Repeat).Distinct().Count());
             }).OfType<TrendPoint>().ToArray();
-            return new TrendSeries(group.Key.Engine + ":" + group.Key.Target, group.Key.Target, Catalog.Get(group.Key.Target).Name + (severalEngines ? " · " + group.Key.Engine : ""), points);
+            return new TrendSeries(group.Key.Engine + ":" + group.Key.Target, group.Key.Target, Catalog.Get(group.Key.Target).Name + (severalEngines ? " · " + Engines.Name(group.Key.Engine) : ""), points);
         }).Where(s => s.Points.Length > 0).ToArray();
     }
 }

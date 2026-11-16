@@ -1,0 +1,12 @@
+{
+  "engines": ["csharp", "java", "python", "rust", "node", "go"],
+  "targets": ["postgreSql"],
+  "datasetRows": [100000],
+  "clients": [4],
+  "repeats": 3,
+  "durationSeconds": 30,
+  "warmupSeconds": 5,
+  "payloadBytes": 256,
+  "batchSize": 1000,
+  "scenarios": ["pointRead", "mixed", "batchInsert"]
+}

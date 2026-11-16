@@ -6,16 +6,20 @@ namespace BenchForge.Coordinator;
 
 public interface IWorkerHost
 {
+    Task CheckAsync(string engine, CancellationToken token) => Task.CompletedTask;
     Task RunAsync(RunCase run, Func<WireEvent, Task> receive, CancellationToken token);
 }
 
 public sealed class WorkerProcess : IWorkerHost
 {
+    public Task CheckAsync(string engine, CancellationToken token) => WorkerCatalog.CheckAsync(engine, token);
     public async Task RunAsync(RunCase run, Func<WireEvent, Task> receive, CancellationToken token)
     {
-        var info = ProcessUtil.Info(ProcessUtil.Dotnet(), [ProcessUtil.WorkerPath()]);
+        var launch = WorkerCatalog.Resolve(run.Engine);
+        var info = ProcessUtil.Info(launch.Executable, launch.Arguments);
+        info.WorkingDirectory = launch.Directory;
         info.RedirectStandardInput = true;
-        using var process = Process.Start(info) ?? throw new InvalidOperationException("Не удалось запустить C#-движок.");
+        using var process = Process.Start(info) ?? throw new InvalidOperationException("Не удалось запустить движок " + run.Engine);
         var stderr = process.StandardError.ReadToEndAsync();
         await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new WorkerCommand(1, "run", run), Json.Options));
         await process.StandardInput.FlushAsync();
@@ -41,6 +45,8 @@ public sealed class WorkerProcess : IWorkerHost
                 if (line.Length > 4 * 1024 * 1024) throw new InvalidDataException("Движок превысил размер сообщения.");
                 var message = JsonSerializer.Deserialize<WireEvent>(line.TrimStart('\uFEFF'), Json.Options) ?? throw new InvalidDataException("Пустое сообщение движка.");
                 if (message.ProtocolVersion != 1 || message.Type != "hello" && message.RunId != run.RunId) throw new InvalidDataException("Неверная версия протокола или ID запуска.");
+                if (message.Type == "hello" && message.Data.GetProperty("engine").GetString() != run.Engine)
+                    throw new InvalidDataException("Запущен другой движок.");
                 if (message.Type == "completed") completed = true;
                 if (message.Type == "failed") failure = message.Data.GetProperty("message").GetString();
                 await receive(message);

@@ -28,6 +28,18 @@ public sealed class VirtualMachineTests
     }
 
     [Fact]
+    public async Task EachEngineGetsItsOwnCleanVmCase()
+    {
+        using var folder = new TestFolder();
+        var host = new FakeMachines();
+        var outcome = await new ExperimentRunner(virtualMachines: host).RunAsync(Config() with { EngineIds = ["csharp", "java", "go"] }, folder.Path, CancellationToken.None);
+        Assert.Equal("completed", outcome.Report.Status);
+        Assert.Equal(3, host.Cases.Count);
+        Assert.Equal(new[] { "csharp", "java", "go" }, outcome.Report.Results.Select(row => row.Engine));
+        Assert.Equal(3, outcome.Report.Engines.Count);
+    }
+
+    [Fact]
     public async Task VmCancellationPreservesStreamedResults()
     {
         using var folder = new TestFolder();
@@ -78,9 +90,10 @@ public sealed class VirtualMachineTests
     public async Task CancelDuringTemplateCreationWaitsForItsDiskThenDeletesIt()
     {
         using var stop = new CancellationTokenSource();
-        var commands = new TemplateCancellationCommands(stop);
+        var name = "benchforge-test-" + Guid.NewGuid().ToString("N");
+        var commands = new TemplateCancellationCommands(stop, name);
         await Assert.ThrowsAsync<OperationCanceledException>(() => new VirtualMachineTemplate(commands)
-            .PrepareAsync(new(), [], _ => { }, stop.Token));
+            .PrepareAsync(new() { Template = name }, [], _ => { }, stop.Token));
         Assert.True(commands.Deleted);
         Assert.False(commands.LaunchWasCancellable);
     }
@@ -102,7 +115,7 @@ public sealed class VirtualMachineTests
         {
             Cases.Add(caseId);
             var stage = config.Plan!.Stages[0];
-            var result = new PhaseResult { Target = target, DatasetRows = rows, Clients = clients, Repeat = 1,
+            var result = new PhaseResult { Engine = config.EngineIds.Single(), Target = target, DatasetRows = rows, Clients = clients, Repeat = 1,
                 Phase = nameof(Scenario.PointRead), Stage = new(1, stage.Name, stage.Seconds, stage.OperationsPerSecond),
                 Verified = true, ElapsedSeconds = .1, SuccessfulOperations = 10, OperationsPerSecond = 100, Server = new(42, 1, 0, 0, 1) };
             await receive(new("result", Result: result));
@@ -110,7 +123,7 @@ public sealed class VirtualMachineTests
             token.ThrowIfCancellationRequested();
             if (FailCleanup) throw new VirtualMachineCleanupException("cleanup failed", new IOException());
             return new BenchmarkReport { Config = config with { VirtualMachine = null }, Status = "completed", Results = [result],
-                Environment = new() { ["os"] = "guest-linux" }, Engines = new() { [caseId] = new("csharp", "runtime", "driver", "db", new()) } };
+                Environment = new() { ["os"] = "guest-linux" }, Engines = new() { [caseId] = new(config.EngineIds.Single(), "runtime", "driver", "db", new()) } };
         }
     }
 
@@ -134,7 +147,7 @@ public sealed class VirtualMachineTests
         public Task<int> RunGuestAsync(string[] arguments, Func<RunUpdate, Task> receive, Func<Task> requestCancellation, CancellationToken token) => throw new NotSupportedException();
     }
 
-    private sealed class TemplateCancellationCommands(CancellationTokenSource stop) : IVmCommandClient
+    private sealed class TemplateCancellationCommands(CancellationTokenSource stop, string name) : IVmCommandClient
     {
         private bool _created;
         public bool Deleted { get; private set; }
@@ -152,11 +165,11 @@ public sealed class VirtualMachineTests
             }
             if (arguments[0] == "delete")
             {
-                Assert.Equal(new[] { "delete", "--purge", "benchforge-base-v1" }, arguments);
+                Assert.Equal(new[] { "delete", "--purge", name }, arguments);
                 Deleted = true;
             }
             return Task.FromResult(arguments[0] == "list"
-                ? JsonSerializer.Serialize(new { list = _created ? new object[] { new { name = "benchforge-base-v1", state = "Stopped" } } : [] })
+                ? JsonSerializer.Serialize(new { list = _created ? new object[] { new { name, state = "Stopped" } } : [] })
                 : "--purge");
         }
         public Task<int> RunGuestAsync(string[] arguments, Func<RunUpdate, Task> receive, Func<Task> requestCancellation, CancellationToken token) => throw new NotSupportedException();

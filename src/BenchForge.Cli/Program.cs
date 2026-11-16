@@ -24,6 +24,14 @@ else if (events) _ = Task.Run(async () =>
 try
 {
     if (args.Contains("--engines")) { Console.WriteLine(JsonSerializer.Serialize(Engines.All, Json.Pretty)); return 0; }
+    if (args.Contains("--worker-vectors")) { Console.WriteLine(JsonSerializer.Serialize(WorkerConformance.Vectors(), Json.Options)); return 0; }
+    if (args.Contains("--prepare-workers"))
+    {
+        var languageIndex = Array.IndexOf(args, "--languages");
+        var selected = languageIndex >= 0 && languageIndex + 1 < args.Length ? args[languageIndex + 1].Split(',') : Engines.All.Select(engine => engine.Id).ToArray();
+        await WorkerPreparation.PrepareLocalAsync(selected, Console.WriteLine, cancellation.Token);
+        return 0;
+    }
     if (args.Contains("--targets")) { Console.WriteLine(JsonSerializer.Serialize(Catalog.Targets, Json.Pretty)); return 0; }
     var configIndex = Array.IndexOf(args, "--config");
     if (args.Contains("--prepare-vm"))
@@ -40,7 +48,7 @@ try
     else if (configIndex >= 0 && configIndex + 1 < args.Length) config = JsonSerializer.Deserialize<BenchmarkConfig>(await File.ReadAllTextAsync(args[configIndex + 1]), Json.Options)!;
     else
     {
-        Console.WriteLine("BenchForge · C# engine\n--smoke                  Проверка SQLite без Docker\n--config <file.json>      Эксперимент из конфигурации\n--check --config <file>   Проверка готовности\n--prepare-vm             Подготовка шаблона чистой VM\n--targets / --engines     Поддерживаемые базы и движки\n--reports <directory>     Папка отчётов"); return 0;
+        Console.WriteLine("BenchForge · native language engines\n--smoke                  Проверка SQLite без Docker\n--config <file.json>      Эксперимент из конфигурации\n--check --config <file>   Проверка готовности\n--prepare-vm             Подготовка шаблона чистой VM\n--prepare-workers        Подготовить движки на этом компьютере\n--languages <ids>        Языки: csharp,java,python,rust,node,go\n--targets / --engines     Поддерживаемые базы и движки\n--reports <directory>     Папка отчётов"); return 0;
     }
     config.Validate();
     if (args.Contains("--check"))

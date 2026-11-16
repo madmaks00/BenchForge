@@ -49,6 +49,8 @@ public static class Catalog
 
 public sealed record BenchmarkConfig
 {
+    [JsonPropertyName("engines")]
+    public List<string> EngineIds { get; init; } = ["csharp"];
     public List<TargetKind> Targets { get; init; } = [TargetKind.Sqlite];
     public List<long> DatasetRows { get; init; } = [10_000];
     public List<int> Clients { get; init; } = [1, 8];
@@ -72,6 +74,8 @@ public sealed record BenchmarkConfig
 
     public void Validate()
     {
+        if (EngineIds is null || EngineIds.Count == 0 || EngineIds.Distinct().Count() != EngineIds.Count || EngineIds.Any(id => !Engines.All.Any(engine => engine.Id == id)))
+            throw new ArgumentException("Выберите движки без повторов: C#, Java, Python, Rust, Node.js или Go.");
         VirtualMachine?.Validate();
         if (VirtualMachine is { } vm && Targets.Any(target => target != TargetKind.Sqlite) && CpuLimit > vm.Cpus)
             throw new ArgumentException("Лимит CPU базы должен помещаться в число CPU виртуальной машины.");
@@ -110,7 +114,7 @@ public sealed record BenchmarkConfig
 
 // Sent only through the private control pipe, never written to a benchmark report.
 public sealed record Endpoint(string Host, int Port, string Username, string Password, string Database, string? FilePath = null);
-public sealed record RunCase(string RunId, TargetKind Target, long Rows, int Clients, int Repeat, BenchmarkConfig Config, Endpoint Endpoint);
+public sealed record RunCase(string RunId, TargetKind Target, long Rows, int Clients, int Repeat, BenchmarkConfig Config, Endpoint Endpoint, string Engine = "csharp");
 public sealed record WorkerCommand(int ProtocolVersion, string Type, RunCase? Run = null);
 public sealed record WireEvent(int ProtocolVersion, string Type, string RunId, JsonElement Data);
 
@@ -118,14 +122,15 @@ public sealed record EngineDescriptor(string Id, string Language, string Status,
 public static class Engines
 {
     public static readonly EngineDescriptor[] All =
-    [new("csharp", "C# / .NET", "implemented"), new("java", "Java", "planned"), new("python", "Python", "planned"),
-     new("rust", "Rust", "planned"), new("node", "Node.js / JavaScript", "planned"), new("go", "Go", "planned")];
+    [new("csharp", "C# / .NET", "implemented"), new("java", "Java", "implemented"), new("python", "Python", "implemented"),
+     new("rust", "Rust", "implemented"), new("node", "Node.js / JavaScript", "implemented"), new("go", "Go", "implemented")];
+    public static string Name(string id) => All.FirstOrDefault(engine => engine.Id == id)?.Language ?? id;
 }
 
 public sealed record PhaseStart(string Phase, double TargetSeconds, LoadStageResult? Stage = null, int? Clients = null);
 public sealed record EngineMetadata(string Engine, string Runtime, string Driver, string ServerVersion, Dictionary<string, string> Settings);
-public sealed record ClientMetrics(double CpuPercent, double RssEndMb, double RssSampledMaxMb, long AllocatedBytes,
-    int Gen0Collections, int Gen1Collections, int Gen2Collections, double GcPauseMs);
+public sealed record ClientMetrics(double CpuPercent, double RssEndMb, double RssSampledMaxMb, long? AllocatedBytes,
+    int? Gen0Collections, int? Gen1Collections, int? Gen2Collections, double? GcPauseMs);
 public sealed record ServerMetrics(double? MemorySampledMaxMb, double? CpuMeanPercent, double? ReadMb, double? WrittenMb,
     int Samples, string Source = "docker stats; approximate receive-window boundaries");
 

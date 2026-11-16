@@ -13,11 +13,13 @@ namespace BenchForge.Desktop;
 
 public sealed record PhaseChoice(string Id, string Name) { public override string ToString() => Name; }
 public sealed record MetricChoice(AnalysisMetric Id, string Name) { public override string ToString() => Name; }
+internal sealed record EngineChoice(string Id) { public override string ToString() => Engines.Name(Id); }
+internal sealed record TargetChoice(TargetKind Id) { public override string ToString() => Catalog.Get(Id).Name; }
 internal sealed record StageChoice(int Number, LoadStage Stage)
 {
     public override string ToString() => $"{Number}. {Stage.Name} · {Stage.Clients} кл.";
 }
-public sealed record MeasurementRow(PhaseResult Source, string Database, string Operation, string Rows, string Clients, string Repeat,
+public sealed record MeasurementRow(PhaseResult Source, string Database, string Engine, string Operation, string Rows, string Clients, string Repeat,
     string Rate, string P99, string Errors, string State, string ClientRam, string ServerRam, string ClientCpu, string ServerCpu, string Gc, string Dropped, string Written);
 
 public sealed class ReportDashboard : UserControl
@@ -33,8 +35,11 @@ public sealed class ReportDashboard : UserControl
     private readonly ComboBox _stage = new();
     private readonly ComboBox _metric = new();
     private readonly ComboBox _axis = new() { ItemsSource = new[] { "Число клиентов", "Объём данных" }, SelectedIndex = 0 };
+    private readonly ComboBox _comparison = new() { ItemsSource = new[] { "Базы данных", "Движки" }, SelectedIndex = 0 };
+    private readonly ComboBox _engine = new();
+    private readonly ComboBox _database = new();
     private readonly TransitioningContentControl _page = Ui.Presenter();
-    private readonly Control _phaseFilter, _clientsFilter, _stageFilter, _metricFilter, _axisFilter;
+    private readonly Control _phaseFilter, _clientsFilter, _stageFilter, _metricFilter, _axisFilter, _comparisonFilter, _engineFilter, _databaseFilter;
     private readonly StackPanel _filters;
     private readonly Button[] _nav;
     private readonly ObservableCollection<MeasurementRow> _details = [];
@@ -69,7 +74,10 @@ public sealed class ReportDashboard : UserControl
         _stageFilter = SidebarField("Этап нагрузки", _stage);
         _metricFilter = SidebarField("Показатель", _metric);
         _axisFilter = SidebarField("По горизонтали", _axis);
-        _filters = Ui.Stack(10, _phaseFilter, SidebarField("Записей", _rows), _clientsFilter, _stageFilter, _metricFilter, _axisFilter);
+        _comparisonFilter = SidebarField("Сравнивать", _comparison);
+        _engineFilter = SidebarField("Движок", _engine);
+        _databaseFilter = SidebarField("База данных", _database);
+        _filters = Ui.Stack(10, _comparisonFilter, _engineFilter, _databaseFilter, _phaseFilter, SidebarField("Записей", _rows), _clientsFilter, _stageFilter, _metricFilter, _axisFilter);
 
         var sidebar = Ui.Stack(12, back, Ui.Stack(5, _title, _targets, _meta), Ui.Rule(), Ui.Stack(3, _nav),
             Ui.Rule(), _filters, folder);
@@ -80,7 +88,7 @@ public sealed class ReportDashboard : UserControl
             new MetricChoice(AnalysisMetric.ErrorPercent, "Доля ошибок"), new MetricChoice(AnalysisMetric.DropPercent, "Доля пропусков"),
             new MetricChoice(AnalysisMetric.EndToEndP99, "p99 с ожиданием") };
         _metric.SelectedIndex = 0; _detailPage = BuildDetails(); Content = root;
-        foreach (var box in new[] { _phase, _rows, _clients, _stage, _metric, _axis }) box.SelectionChanged += (_, _) => { if (!_updating) RefreshNow(); };
+        foreach (var box in new[] { _phase, _rows, _clients, _stage, _metric, _axis, _comparison, _engine, _database }) box.SelectionChanged += (_, _) => { if (!_updating) RefreshNow(); };
         AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(RefreshNow);
         _updating = false; RefreshNow();
     }
@@ -109,12 +117,15 @@ public sealed class ReportDashboard : UserControl
         var rows = _rows.SelectedItem is long count ? count : 1000;
         if (_report.Config.Plan is { Stages.Count: > 0 } plan)
         {
-            if (ReportAnalysis.SetupPhase(phase)) return new(phase, rows, plan.PeakClients);
+            if (ReportAnalysis.SetupPhase(phase)) return Scope(new(phase, rows, plan.PeakClients));
             var choice = _stage.SelectedItem as StageChoice ?? new StageChoice(1, plan.Stages[0]);
-            return new(phase, rows, choice.Stage.Clients, choice.Number);
+            return Scope(new(phase, rows, choice.Stage.Clients, choice.Number));
         }
-        return new(phase, rows, _clients.SelectedItem is int clients ? clients : 1);
+        return Scope(new(phase, rows, _clients.SelectedItem is int clients ? clients : 1));
     }
+    private ReportSlice Scope(ReportSlice slice) => _comparison.SelectedIndex == 1
+        ? slice with { Target = (_database.SelectedItem as TargetChoice)?.Id ?? _report.Config.Targets.FirstOrDefault() }
+        : slice with { Engine = (_engine.SelectedItem as EngineChoice)?.Id ?? _report.Config.EngineIds.FirstOrDefault() ?? "csharp" };
     private AnalysisMetric Metric => (_metric.SelectedItem as MetricChoice)?.Id ?? AnalysisMetric.Rate;
     public void SetReport(BenchmarkReport report)
     {
@@ -125,6 +136,9 @@ public sealed class ReportDashboard : UserControl
             _metric.SelectedIndex = 0;
             _phase.SelectedIndex = -1;
             _stage.SelectedIndex = -1;
+            _comparison.SelectedIndex = 0;
+            _engine.SelectedIndex = -1;
+            _database.SelectedIndex = -1;
         }
         _report = report;
         _data = report.Results.ToArray();
@@ -137,6 +151,8 @@ public sealed class ReportDashboard : UserControl
         _metric.SelectedItem = ((IEnumerable<MetricChoice>)_metric.ItemsSource!).First(x => x.Id == metric);
         _updating = false; _selectedPage = scaling ? 1 : 0; RefreshNow();
     }
+    public void SelectEngineComparison(bool enabled)
+    { _comparison.SelectedIndex = enabled ? 1 : 0; RefreshNow(); }
     public void RefreshNow()
     {
         if (_updating) return; _updating = true;
@@ -144,6 +160,12 @@ public sealed class ReportDashboard : UserControl
         {
             var previous = Slice;
             var previousStage = (_stage.SelectedItem as StageChoice)?.Number;
+            var previousEngine = (_engine.SelectedItem as EngineChoice)?.Id;
+            var previousTarget = (_database.SelectedItem as TargetChoice)?.Id;
+            var engines = _report.Config.EngineIds.Concat(_data.Select(row => row.Engine)).Distinct().Select(id => new EngineChoice(id)).ToArray();
+            _engine.ItemsSource = engines; _engine.SelectedItem = engines.FirstOrDefault(choice => choice.Id == previousEngine) ?? engines.FirstOrDefault();
+            var databases = _report.Config.Targets.Concat(_data.Select(row => row.Target)).Distinct().Select(id => new TargetChoice(id)).ToArray();
+            _database.ItemsSource = databases; _database.SelectedItem = databases.FirstOrDefault(choice => choice.Id == previousTarget) ?? databases.FirstOrDefault();
             var rows = _data.Select(r => r.DatasetRows).Concat(_report.Config.DatasetRows).Distinct().Order().ToArray();
             var clients = _data.Select(r => r.Clients).Concat(_report.Config.Clients).Distinct().Order().ToArray();
             _rows.ItemsSource = rows; _rows.SelectedItem = rows.Contains(previous.Rows) ? previous.Rows : rows.FirstOrDefault(1000L);
@@ -176,6 +198,10 @@ public sealed class ReportDashboard : UserControl
         _stageFilter.IsVisible = hasMultipleStages && (_selectedPage == 2 || (_selectedPage == 0 && !ReportAnalysis.SetupPhase(Slice.Phase)));
         _metricFilter.IsVisible = _selectedPage == 0 && _data.Length > 0;
         _axisFilter.IsVisible = _selectedPage == 1 && !hasMultipleStages;
+        var manyEngines = _report.Config.EngineIds.Concat(_data.Select(row => row.Engine)).Distinct().Count() > 1;
+        _comparisonFilter.IsVisible = manyEngines;
+        _engineFilter.IsVisible = manyEngines && _comparison.SelectedIndex == 0;
+        _databaseFilter.IsVisible = manyEngines && _comparison.SelectedIndex == 1;
         for (var i = 0; i < _nav.Length; i++) Ui.Select(_nav[i], i == _selectedPage);
         if (_selectedPage == 2) RefreshDetails();
         _page.Content = _selectedPage switch { 1 => BuildScaling(), 2 => _detailPage, _ => BuildComparison() };
@@ -274,7 +300,7 @@ public sealed class ReportDashboard : UserControl
         var rates = ReportAnalysis.Compare(_report, _data, slice, AnalysisMetric.Rate);
         var p99 = ReportAnalysis.Compare(_report, _data, slice, AnalysisMetric.P99);
         var memory = ReportAnalysis.Compare(_report, _data, slice, AnalysisMetric.ServerMemory);
-        var panel = Ui.Stack(0); var header = TableLine("База данных", slice.Phase == "index_build" ? "Подготовка, с" : "Скорость, " + ReportAnalysis.RateUnit(slice.Phase), "Ответ p99, мс", "Память базы, МБ", true);
+        var panel = Ui.Stack(0); var header = TableLine(_comparison.SelectedIndex == 1 ? "Движок" : "База данных", slice.Phase == "index_build" ? "Подготовка, с" : "Скорость, " + ReportAnalysis.RateUnit(slice.Phase), "Ответ p99, мс", "Память базы, МБ", true);
         panel.Children.Add(header); panel.Children.Add(Ui.Rule());
         foreach (var item in rates)
         {
@@ -353,6 +379,7 @@ public sealed class ReportDashboard : UserControl
         foreach (var (header, property, width) in new[]
         {
             ("База", nameof(MeasurementRow.Database), new DataGridLength(104)),
+            ("Движок", nameof(MeasurementRow.Engine), new DataGridLength(95)),
             ("Операция", nameof(MeasurementRow.Operation), new DataGridLength(1, DataGridLengthUnitType.Star)),
             ("Повтор", nameof(MeasurementRow.Repeat), new DataGridLength(56)),
             ("Скорость / время", nameof(MeasurementRow.Rate), new DataGridLength(116)),
@@ -376,10 +403,10 @@ public sealed class ReportDashboard : UserControl
     {
         _refreshingDetails = true; var selected = (_table.SelectedItem as MeasurementRow)?.Source;
         var slice = _report.Config.Plan is null ? Slice : SliceFor(nameof(Scenario.PointRead));
-        var rows = _all.IsChecked == true ? _data : _data.Where(r => r.DatasetRows == slice.Rows && r.Clients == slice.Clients && r.Stage?.Number == slice.StageNumber).ToArray();
+        var rows = _all.IsChecked == true ? _data : _data.Where(r => r.DatasetRows == slice.Rows && r.Clients == slice.Clients && r.Stage?.Number == slice.StageNumber && ReportAnalysis.IdentityMatches(r, slice)).ToArray();
         var showStage = _report.Config.Plan?.Stages.Count > 1;
         _details.Clear();
-        foreach (var r in rows) _details.Add(new(r, Catalog.Get(r.Target).Name, ReportAnalysis.PhaseName(r.Phase) + (showStage && r.Stage is { } stage ? " · " + stage.Name : ""), ReportAnalysis.Count(r.DatasetRows), r.Clients.ToString(), r.Repeat.ToString(),
+        foreach (var r in rows) _details.Add(new(r, Catalog.Get(r.Target).Name, Engines.Name(r.Engine), ReportAnalysis.PhaseName(r.Phase) + (showStage && r.Stage is { } stage ? " · " + stage.Name : ""), ReportAnalysis.Count(r.DatasetRows), r.Clients.ToString(), r.Repeat.ToString(),
             ReportAnalysis.Number(ReportAnalysis.Rate(r), ReportAnalysis.RateUnit(r.Phase)), ReportAnalysis.Number(r.ServiceLatency?.P99Ms), ReportAnalysis.Count(r.Errors),
             r.Cancelled ? "Остановлен" : !r.Verified ? "Не проверен" : r.Errors > 0 ? "Есть ошибки" : "Проверен", ReportAnalysis.Number(r.Client?.RssSampledMaxMb),
             ReportAnalysis.Number(r.Server?.MemorySampledMaxMb), ReportAnalysis.Number(r.Client?.CpuPercent), ReportAnalysis.Number(r.Server?.CpuMeanPercent),
@@ -389,7 +416,7 @@ public sealed class ReportDashboard : UserControl
     }
     private static string Describe(PhaseResult r)
     {
-        var text = $"{Catalog.Get(r.Target).Name} · {ReportAnalysis.PhaseName(r.Phase)} · повтор {r.Repeat}\n"
+        var text = $"{Catalog.Get(r.Target).Name} · {Engines.Name(r.Engine)} · {ReportAnalysis.PhaseName(r.Phase)} · повтор {r.Repeat}\n"
             + (r.Stage is { } stage ? $"Этап {stage.Number}. {stage.Name} · {stage.TargetSeconds:0.###} с по плану\n" : "")
             + (r.Stage?.OperationsPerSecond is { } rate ? $"Целевая частота: {rate:N0} оп./с · запланировано: {r.PlannedOperations:N0}\n" : "")
             + $"{ReportAnalysis.Count(r.DatasetRows)} записей · {r.Clients} клиентов · {ReportAnalysis.Number(r.ElapsedSeconds, "с")}\n"

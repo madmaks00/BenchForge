@@ -6,3 +6,8 @@ reports/
 publish/
 *.user
 *.suo
+workers/dist/
+workers/**/node_modules/
+workers/**/target/
+**/__pycache__/
+*.pyc

@@ -1,0 +1,14 @@
+{
+  "targets": ["postgreSql", "mySql", "mariaDb", "mongoDb", "redis", "valkey", "clickHouse", "sqlite"],
+  "datasetRows": [10000],
+  "clients": [1, 8],
+  "repeats": 2,
+  "durationSeconds": 5,
+  "warmupSeconds": 2,
+  "payloadBytes": 256,
+  "batchSize": 1000,
+  "seed": 42,
+  "cpuLimit": 2,
+  "memoryMb": 2048,
+  "loadModel": "closedLoop"
+}

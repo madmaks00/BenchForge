@@ -1,0 +1,13 @@
+{
+  "targets": ["clickHouse"],
+  "datasetRows": [100000],
+  "clients": [1, 4, 16],
+  "scenarios": ["batchInsert"],
+  "repeats": 3,
+  "durationSeconds": 15,
+  "warmupSeconds": 2,
+  "payloadBytes": 256,
+  "batchSize": 10000,
+  "cpuLimit": 4,
+  "memoryMb": 4096
+}

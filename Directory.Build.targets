@@ -1,0 +1,9 @@
+<Project>
+  <Target Name="CopyCSharpWorkerForLocalRun" AfterTargets="Build"
+          Condition="'$(MSBuildProjectName)' == 'BenchForge.Desktop' Or '$(MSBuildProjectName)' == 'BenchForge.Cli'">
+    <ItemGroup>
+      <CSharpWorkerFiles Include="$(MSBuildThisFileDirectory)src/BenchForge.Worker.CSharp/bin/$(Configuration)/$(TargetFramework)/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(CSharpWorkerFiles)" DestinationFiles="@(CSharpWorkerFiles->'$(TargetDir)worker/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

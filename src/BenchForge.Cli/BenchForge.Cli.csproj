@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../BenchForge.Coordinator/BenchForge.Coordinator.csproj" />
+    <ProjectReference Include="../BenchForge.Worker.CSharp/BenchForge.Worker.CSharp.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,344 @@
+using System.Collections.ObjectModel;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Data;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Threading;
+using BenchForge.Contracts;
+using BenchForge.Coordinator;
+
+namespace BenchForge.Desktop;
+
+public sealed record PhaseChoice(string Id, string Name) { public override string ToString() => Name; }
+public sealed record MetricChoice(AnalysisMetric Id, string Name) { public override string ToString() => Name; }
+internal sealed record StageChoice(int Number, LoadStage Stage)
+{
+    public override string ToString() => $"{Number}. {Stage.Name} · {Stage.Clients} кл.";
+}
+public sealed record MeasurementRow(PhaseResult Source, string Database, string Operation, string Rows, string Clients, string Repeat,
+    string Rate, string P99, string Errors, string State, string ClientRam, string ServerRam, string ClientCpu, string ServerCpu, string Gc, string Dropped, string Written);
+
+public sealed class ReportDashboard : UserControl
+{
+    private BenchmarkReport _report = new();
+    private PhaseResult[] _data = [];
+    private readonly TextBlock _title = Ui.Label("Результаты", 28, Ui.Text, true);
+    private readonly TextBlock _meta = Ui.Label("");
+    private readonly ComboBox _phase = new() { MinWidth = 260 };
+    private readonly ComboBox _rows = new() { MinWidth = 140 };
+    private readonly ComboBox _clients = new() { MinWidth = 120 };
+    private readonly ComboBox _stage = new() { MinWidth = 235 };
+    private readonly ComboBox _metric = new() { Width = 225 };
+    private readonly ComboBox _axis = new() { ItemsSource = new[] { "Число клиентов", "Объём данных" }, SelectedIndex = 0, Width = 190 };
+    private readonly TransitioningContentControl _page = Ui.Presenter();
+    private readonly Control _phaseFilter, _clientsFilter, _stageFilter;
+    private readonly StackPanel _filters = new() { Orientation = Orientation.Horizontal, Spacing = 16, Margin = new Thickness(0, 0, 0, 20) };
+    private readonly Button[] _nav;
+    private readonly ObservableCollection<MeasurementRow> _details = [];
+    private readonly DataGrid _table = new() { AutoGenerateColumns = false, IsReadOnly = true, CanUserResizeColumns = true, CanUserSortColumns = false,
+        GridLinesVisibility = DataGridGridLinesVisibility.Horizontal, SelectionMode = DataGridSelectionMode.Single, Background = Ui.B(Ui.Surface),
+        BorderBrush = Ui.B(Ui.Line), BorderThickness = new Thickness(1), FontSize = 13, ClipToBounds = true };
+    private readonly TextBox _detailText = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, Height = 170, FontSize = 13 };
+    private readonly Expander _detailDrawer = new() { Header = "Расшифровка измерения" };
+    private readonly CheckBox _all = new() { Content = "Все условия отчёта" };
+    private readonly CheckBox _resources = new() { Content = "Ресурсы" };
+    private readonly TextBlock _detailCount = Ui.Label("", 12);
+    private readonly List<DataGridColumn> _resourceColumns = [];
+    private readonly List<DataGridColumn> _conditionColumns = [];
+    private readonly Control _detailPage;
+    private bool _updating, _refreshingDetails;
+    private int _selectedPage;
+    public event Action? LibraryRequested;
+    public event Action? FolderRequested;
+    public int DisplayedResultCount => _data.Length;
+    public int SelectedPage { get => _selectedPage; set { _selectedPage = Math.Clamp(value, 0, 2); RefreshPage(); } }
+
+    public ReportDashboard()
+    {
+        _updating = true;
+        var root = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*") };
+        var back = Ui.Button("←", "quiet", () => LibraryRequested?.Invoke()); back.Width = 36; back.Padding = new Thickness(0);
+        back.Margin = new Thickness(0, 0, 12, 0); back.VerticalAlignment = VerticalAlignment.Top;
+        ToolTip.SetTip(back, "Все отчёты"); Avalonia.Automation.AutomationProperties.SetName(back, "Вернуться к отчётам");
+        var folder = Ui.Button("Папка отчёта", "quiet", () => FolderRequested?.Invoke());
+        var heading = new DockPanel { Margin = new Thickness(0, 0, 0, 22) }; DockPanel.SetDock(folder, Dock.Right); heading.Children.Add(folder);
+        DockPanel.SetDock(back, Dock.Left); heading.Children.Add(back); heading.Children.Add(Ui.Stack(7, _title, _meta)); root.Children.Add(heading);
+        _phaseFilter = Ui.Field("Операция", _phase); _filters.Children.Add(_phaseFilter); _filters.Children.Add(Ui.Field("Записей", _rows));
+        _clientsFilter = Ui.Field("Клиентов", _clients); _filters.Children.Add(_clientsFilter);
+        _stageFilter = Ui.Field("Этап нагрузки", _stage); _filters.Children.Add(_stageFilter);
+        Grid.SetRow(_filters, 1); root.Children.Add(_filters);
+        _nav = new[] { "Сравнение", "Масштабирование", "Измерения" }.Select(x => Ui.Button(x, "quiet")).ToArray();
+        var navigation = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 0, 0, 20) };
+        for (var i = 0; i < _nav.Length; i++) { var index = i; _nav[i].Click += (_, _) => SelectedPage = index; navigation.Children.Add(_nav[i]); }
+        Grid.SetRow(navigation, 2); root.Children.Add(navigation); Grid.SetRow(_page, 3); root.Children.Add(_page);
+        _metric.ItemsSource = new[] { new MetricChoice(AnalysisMetric.Rate, "Скорость"), new MetricChoice(AnalysisMetric.P99, "Задержка p99"),
+            new MetricChoice(AnalysisMetric.ServerMemory, "Память базы"), new MetricChoice(AnalysisMetric.ClientMemory, "Память генератора"),
+            new MetricChoice(AnalysisMetric.ServerCpu, "CPU базы"), new MetricChoice(AnalysisMetric.ClientCpu, "CPU генератора"), new MetricChoice(AnalysisMetric.GcPause, "Паузы GC"),
+            new MetricChoice(AnalysisMetric.ErrorPercent, "Доля ошибок"), new MetricChoice(AnalysisMetric.DropPercent, "Доля пропусков"),
+            new MetricChoice(AnalysisMetric.EndToEndP99, "p99 с ожиданием") };
+        _metric.SelectedIndex = 0; _detailPage = BuildDetails(); Content = root;
+        foreach (var box in new[] { _phase, _rows, _clients, _stage, _metric, _axis }) box.SelectionChanged += (_, _) => { if (!_updating) RefreshNow(); };
+        AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(RefreshNow);
+        _updating = false; RefreshNow();
+    }
+    private ReportSlice Slice => SliceFor((_phase.SelectedItem as PhaseChoice)?.Id ?? nameof(Scenario.PointRead));
+    private ReportSlice SliceFor(string phase)
+    {
+        var rows = _rows.SelectedItem is long count ? count : 1000;
+        if (_report.Config.Plan is { Stages.Count: > 0 } plan)
+        {
+            if (ReportAnalysis.SetupPhase(phase)) return new(phase, rows, plan.PeakClients);
+            var choice = _stage.SelectedItem as StageChoice ?? new StageChoice(1, plan.Stages[0]);
+            return new(phase, rows, choice.Stage.Clients, choice.Number);
+        }
+        return new(phase, rows, _clients.SelectedItem is int clients ? clients : 1);
+    }
+    private AnalysisMetric Metric => (_metric.SelectedItem as MetricChoice)?.Id ?? AnalysisMetric.Rate;
+    public void SetReport(BenchmarkReport report)
+    {
+        _updating = true;
+        if (!ReferenceEquals(_report, report))
+        {
+            _selectedPage = 0;
+            _metric.SelectedIndex = 0;
+            _phase.SelectedIndex = -1;
+            _stage.SelectedIndex = -1;
+        }
+        _report = report;
+        _data = report.Results.ToArray();
+        _updating = false;
+        RefreshNow();
+    }
+    public void SelectGraphView(bool scaling, AnalysisMetric metric = AnalysisMetric.Rate)
+    {
+        _updating = true;
+        _metric.SelectedItem = ((IEnumerable<MetricChoice>)_metric.ItemsSource!).First(x => x.Id == metric);
+        _updating = false; _selectedPage = scaling ? 1 : 0; RefreshNow();
+    }
+    public void RefreshNow()
+    {
+        if (_updating) return; _updating = true;
+        try
+        {
+            var previous = Slice;
+            var previousStage = (_stage.SelectedItem as StageChoice)?.Number;
+            var rows = _data.Select(r => r.DatasetRows).Concat(_report.Config.DatasetRows).Distinct().Order().ToArray();
+            var clients = _data.Select(r => r.Clients).Concat(_report.Config.Clients).Distinct().Order().ToArray();
+            _rows.ItemsSource = rows; _rows.SelectedItem = rows.Contains(previous.Rows) ? previous.Rows : rows.FirstOrDefault(1000L);
+            _clients.ItemsSource = clients; _clients.SelectedItem = clients.Contains(previous.Clients) ? previous.Clients : clients.FirstOrDefault(1);
+            var stages = _report.Config.Plan?.Stages.Select((step, index) => new StageChoice(index + 1, step)).ToArray() ?? [];
+            _stage.ItemsSource = stages;
+            _stage.SelectedItem = stages.FirstOrDefault(stage => stage.Number == previousStage) ?? stages.FirstOrDefault();
+            var phases = ReportAnalysis.KnownPhases.Where(p => _data.Any(r => r.Phase == p)).OrderBy(p => ReportAnalysis.SetupPhase(p) ? 1 : 0).Select(p => new PhaseChoice(p, ReportAnalysis.PhaseName(p))).ToArray();
+            if (phases.Length == 0) phases = [new(nameof(Scenario.PointRead), ReportAnalysis.PhaseName(nameof(Scenario.PointRead)))];
+            _phase.ItemsSource = phases; _phase.SelectedItem = phases.FirstOrDefault(p => p.Id == previous.Phase) ?? phases[0];
+            _title.Text = string.Join(" / ", _report.Config.Targets.Concat(_data.Select(r => r.Target)).Distinct().Select(t => Catalog.Get(t).Name));
+            var workload = _report.Config.Plan is { } plan ? $"{LoadPlan.Name(plan.Profile)} · {plan.Seconds:0.###} с на операцию" : $"{_report.Config.DurationSeconds:g} с на операцию";
+            _meta.Text = $"{_report.StartedAt.ToLocalTime():dd MMMM yyyy, HH:mm}   ·   {workload}   ·   повторов: {_report.Config.Repeats}";
+            RefreshPage();
+        }
+        finally { _updating = false; }
+    }
+    private void RefreshPage()
+    {
+        _phaseFilter.IsVisible = _selectedPage != 2; _filters.IsVisible = _selectedPage != 2 || _all.IsChecked != true;
+        var planned = _report.Config.Plan;
+        _nav[1].Content = planned?.Stages.Count > 1 ? "Ход нагрузки" : "Масштабирование";
+        _clientsFilter.IsVisible = planned is null;
+        _stageFilter.IsVisible = planned?.Stages.Count > 1 && (_selectedPage == 2 || (_selectedPage == 0 && !ReportAnalysis.SetupPhase(Slice.Phase)));
+        foreach (var control in new[] { _metric, _axis }) if (control.Parent is Panel parent) parent.Children.Remove(control);
+        for (var i = 0; i < _nav.Length; i++) Ui.Select(_nav[i], i == _selectedPage);
+        if (_selectedPage == 2) RefreshDetails();
+        _page.Content = _selectedPage switch { 1 => BuildScaling(), 2 => _detailPage, _ => BuildComparison() };
+    }
+    private Control BuildComparison()
+    {
+        if (_data.Length == 0) return Ui.Card(Ui.Stack(12, Ui.Label("Измерений пока нет", 22, Ui.Text, true), Ui.Label(_report.Failures.Count > 0 ? string.Join("\n", _report.Failures) : "Они появятся после завершения первого этапа.")));
+        var slice = Slice; var metric = Metric; var description = ReportAnalysis.Describe(metric, slice.Phase);
+        var series = ReportAnalysis.Compare(_report, _data, slice, metric); var narrative = ReportAnalysis.Explain(_report, _data, slice, metric);
+        var chart = new ComparisonChart(); chart.SetData(series, description);
+        var chartHeader = new DockPanel(); DockPanel.SetDock(_metric, Dock.Right); chartHeader.Children.Add(_metric);
+        chartHeader.Children.Add(Ui.Stack(5, Ui.Label(description.Title, 18, Ui.Text, true), Ui.Label(description.Unit + "  ·  " + Direction(description), 12)));
+        ToolTip.SetTip(chartHeader, description.Explanation);
+        var chartPanel = Ui.Card(Ui.Stack(16, chartHeader, chart));
+        var matched = _data.Where(r => ReportAnalysis.Matches(r, slice)).ToArray();
+        var notes = Ui.Stack(12, Ui.Label(description.Explanation, 13));
+        foreach (var note in narrative.Limitations) notes.Children.Add(Ui.Label("• " + note, 13));
+        var stage = slice.StageNumber is not null && _stage.SelectedItem is StageChoice choice ? choice.Stage : null;
+        var condition = $"{ReportAnalysis.Count(slice.Rows)} записей · клиентов: {slice.Clients}" + (stage is null ? "" : $" · {stage.Name}");
+        if (stage?.OperationsPerSecond is { } goal) condition += $" · цель {goal:N0} оп./с";
+        var story = Ui.Stack(16, Ui.Badge(narrative.Preliminary ? "Предварительный результат" : "Наблюдение", narrative.Preliminary ? Ui.Amber : Ui.Green),
+            Ui.Label(narrative.Headline, 21, Ui.Text, true), Ui.Label(condition, 13), Ui.Rule(),
+            Stat("Повторов с данными (мин.)", series.Where(s => s.Median.HasValue).Select(s => s.Values.Length).DefaultIfEmpty(0).Min().ToString()),
+            Stat("Ошибок запросов", ReportAnalysis.Count(matched.Sum(r => r.Errors))), Stat("Пропусков", ReportAnalysis.Count(matched.Sum(r => r.Dropped))),
+            new Expander { Header = "Как понимать результат", Content = notes });
+        var scheduled = matched.Sum(r => r.PlannedOperations);
+        if (stage?.OperationsPerSecond is not null && scheduled > 0)
+            story.Children.Insert(story.Children.Count - 1, Stat("Успешно из запланированных",
+                ReportAnalysis.Number(matched.Sum(r => r.SuccessfulOperations) * 100d / scheduled, "%")));
+        notes.Margin = new Thickness(0, 12, 0, 8);
+        var result = Ui.Stack(20, Ui.Columns("2.15*,20,*", chartPanel, Ui.Card(story)));
+        var operations = new Expander { Header = "Все операции" };
+        operations.PropertyChanged += (_, change) =>
+        {
+            if (change.Property == Expander.IsExpandedProperty && operations.IsExpanded && operations.Content is null)
+                operations.Content = BuildOperationTable();
+        };
+        result.Children.Add(operations);
+        var conditions = Ui.Stack(12, BuildMetricTable(slice), Ui.Label(ReportAnalysis.PhaseExplanation(slice.Phase)), Ui.Label("ОС: " + _report.Environment.GetValueOrDefault("os", "не сохранена") +
+            "\nЛогических процессоров: " + _report.Environment.GetValueOrDefault("logical_cpus", "—") + $"\nЛимит контейнера: {_report.Config.CpuLimit:g} CPU · {_report.Config.MemoryMb:N0} МБ RAM"),
+            Ui.Label("SQLite работает в генераторе; Redis/Valkey, SQL и ClickHouse используют разные профили хранения. Модель CPU и диска в этом отчёте не сохранена.", 13));
+        if (_report.Failures.Count > 0 || _report.Warnings.Count > 0) conditions.Children.Add(Ui.Label(string.Join("\n", _report.Failures.Concat(_report.Warnings)), 13, Ui.Amber));
+        result.Children.Add(new Expander { Header = "Показатели, условия и замечания", Content = conditions }); conditions.Margin = new Thickness(0, 12, 0, 8);
+        return Ui.Scroll(result);
+    }
+    private static string Direction(MetricDescription description) => description.Direction switch { MetricDirection.Higher => "больше — выше скорость", MetricDirection.Lower => "меньше — лучше", _ => "сравнивайте вместе со скоростью" };
+    private Control BuildOperationTable()
+    {
+        var panel = Ui.Stack(16, Ui.Label("Скорость или время подготовки. Выберите операцию, чтобы открыть её график.", 13));
+        var phases = ((IEnumerable<PhaseChoice>)_phase.ItemsSource!).ToArray();
+        foreach (var phase in phases)
+        {
+            var values = ReportAnalysis.Compare(_report, _data, SliceFor(phase.Id), AnalysisMetric.Rate);
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("260,*"), Margin = new Thickness(0, 3) };
+            var open = Ui.Button(phase.Name, "quiet", () => _phase.SelectedItem = phase);
+            open.HorizontalAlignment = HorizontalAlignment.Left;
+            row.Children.Add(open);
+            var numbers = new WrapPanel { VerticalAlignment = VerticalAlignment.Center };
+            foreach (var item in values)
+            {
+                var value = Ui.Label(item.Name + "  " + ReportAnalysis.Number(item.Median, item.Median.HasValue ? ReportAnalysis.RateUnit(phase.Id) : ""), 13);
+                value.Margin = new Thickness(10, 4, 16, 4);
+                if (item.Median is null) ToolTip.SetTip(value, item.MissingReason);
+                numbers.Children.Add(value);
+            }
+            Grid.SetColumn(numbers, 1); row.Children.Add(numbers); panel.Children.Add(row); panel.Children.Add(Ui.Rule());
+        }
+        return panel;
+    }
+    private static Control Stat(string label, string value)
+    { var row = new DockPanel(); var right = Ui.Label(value, 14, Ui.Text, true); DockPanel.SetDock(right, Dock.Right); row.Children.Add(right); row.Children.Add(Ui.Label(label, 13)); return row; }
+    private Control BuildMetricTable(ReportSlice slice)
+    {
+        var rates = ReportAnalysis.Compare(_report, _data, slice, AnalysisMetric.Rate);
+        var p99 = ReportAnalysis.Compare(_report, _data, slice, AnalysisMetric.P99);
+        var memory = ReportAnalysis.Compare(_report, _data, slice, AnalysisMetric.ServerMemory);
+        var panel = Ui.Stack(0); var header = TableLine("База данных", slice.Phase == "index_build" ? "Подготовка, с" : "Скорость, " + ReportAnalysis.RateUnit(slice.Phase), "Ответ p99, мс", "Память базы, МБ", true);
+        panel.Children.Add(header); panel.Children.Add(Ui.Rule());
+        foreach (var item in rates)
+        {
+            var line = TableLine(item.Name, ReportAnalysis.Number(item.Median), ReportAnalysis.Number(p99.FirstOrDefault(s => s.Id == item.Id)?.Median), ReportAnalysis.Number(memory.FirstOrDefault(s => s.Id == item.Id)?.Median));
+            ToolTip.SetTip(line, item.Median is null ? item.MissingReason : "Медианы корректных повторов; память — максимум среди выборок каждого этапа.");
+            panel.Children.Add(line); panel.Children.Add(Ui.Rule());
+        }
+        return panel;
+    }
+    private static Control TableLine(string name, string rate, string latency, string memory, bool header = false)
+    {
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("1.4*,*,*,*"), Margin = new Thickness(4, 12) };
+        var values = new[] { name, rate, latency, memory };
+        for (var i = 0; i < values.Length; i++) { var text = Ui.Label(values[i], header ? 12 : 14, header ? Ui.Muted : Ui.Text); Grid.SetColumn(text, i); row.Children.Add(text); } return row;
+    }
+    private Control BuildScaling()
+    {
+        var slice = Slice; var byRows = _axis.SelectedIndex == 1;
+        if (_report.Config.Plan is { Stages.Count: > 1 } plan)
+        {
+            if (ReportAnalysis.SetupPhase(slice.Phase))
+                return Ui.Card(Ui.Stack(10, Ui.Label("Выберите операцию с этапами нагрузки", 20, Ui.Text, true), Ui.Label("Загрузка данных и создание индекса измеряются один раз за запуск.")));
+            return BuildStageCharts(slice, plan);
+        }
+        var heading = new DockPanel(); DockPanel.SetDock(_axis, Dock.Right); heading.Children.Add(_axis);
+        heading.Children.Add(Ui.Stack(5, Ui.Label("Как меняется результат", 20, Ui.Text, true), Ui.Label(byRows ? $"Фиксировано: {slice.Clients} клиентов" : $"Фиксировано: {ReportAnalysis.Count(slice.Rows)} записей", 13)));
+        var rateDescription = ReportAnalysis.Describe(AnalysisMetric.Rate, slice.Phase);
+        var rates = ReportAnalysis.Trends(_report, _data, slice, AnalysisMetric.Rate, byRows);
+        var speed = new ScalingChart(); speed.SetData(rates, rateDescription, byRows);
+        var latency = new ScalingChart(); latency.SetData(ReportAnalysis.Trends(_report, _data, slice, AnalysisMetric.P99, byRows), ReportAnalysis.Describe(AnalysisMetric.P99, slice.Phase), byRows);
+        var left = Ui.Card(Ui.Stack(12, Ui.Label(rateDescription.Title, 17, Ui.Text, true), Ui.Label(rateDescription.Unit, 12), speed));
+        var right = Ui.Card(ReportAnalysis.SetupPhase(slice.Phase) ? Ui.Stack(12, Ui.Label("Задержка запросов", 17, Ui.Text, true), Ui.Label("На этапе подготовки не измеряется."))
+            : Ui.Stack(12, Ui.Label("Медленные ответы · p99", 17, Ui.Text, true), Ui.Label("мс · меньше — быстрее отклик", 12), latency));
+        var summary = Ui.Stack(10);
+        foreach (var series in rates.Where(s => s.Points.Length > 1 && s.Points[0].Median > 0))
+        {
+            var first = series.Points[0]; var last = series.Points[^1]; var delta = (last.Median / first.Median - 1) * 100;
+            summary.Children.Add(Ui.Label($"{series.Name}: {first.X:N0} → {last.X:N0} {(byRows ? "записей" : "клиентов")}   ·   {(slice.Phase == "index_build" ? "время" : "скорость")} {delta:+0.0;-0.0;0}%", 14, Ui.Text));
+        }
+        if (ReportAnalysis.Explain(_report, _data, slice, AnalysisMetric.Rate).Preliminary) summary.Children.Add(Ui.Label("Пробный или неполный прогон: устойчивость изменения нужно проверить повторами.", 13, Ui.Amber));
+        return Ui.Scroll(Ui.Stack(22, heading, Ui.Columns("*,20,*", left, right), summary, Ui.Label("Точки — измеренные уровни. Линия соединяет их; промежуточные результаты не рассчитываются.", 12)));
+    }
+
+    private Control BuildStageCharts(ReportSlice slice, LoadPlan plan)
+    {
+        Control Chart(AnalysisMetric metric)
+        {
+            var description = ReportAnalysis.Describe(metric, slice.Phase);
+            var chart = new ScalingChart();
+            chart.SetStages(ReportAnalysis.StageTrends(_data, slice, metric), description, plan.Stages);
+            return Ui.Card(Ui.Stack(8, Ui.Label(description.Title, 17, Ui.Text, true), chart), 18);
+        }
+
+        var stages = new WrapPanel();
+        foreach (var (stage, index) in plan.Stages.Select((stage, index) => (stage, index)))
+        {
+            var badge = Ui.Badge($"{index + 1}. {stage.Name} · {stage.Clients} кл. · {stage.Seconds:0.###} с");
+            badge.Margin = new Thickness(0, 0, 8, 8);
+            stages.Children.Add(badge);
+        }
+        var metrics = Ui.Stack(16, Ui.Columns("*,16,*", Chart(AnalysisMetric.Rate), Chart(AnalysisMetric.P99)),
+            new Expander { Header = "Ошибки и память по этапам", Content = Ui.Columns("*,16,*", Chart(AnalysisMetric.ErrorPercent),
+                Chart(_report.Config.Targets.All(target => target == TargetKind.Sqlite) ? AnalysisMetric.ClientMemory : AnalysisMetric.ServerMemory)) });
+        Control schedule = plan.Stages.Count <= 5 ? stages : new Expander { Header = $"План нагрузки · {plan.Stages.Count} этапов", Content = stages };
+        return Ui.Scroll(Ui.Stack(12, Ui.Label(LoadPlan.Name(plan.Profile), 20, Ui.Text, true), schedule, metrics,
+            Ui.Label("Номера на графике соответствуют этапам. Для скорости показаны все завершённые измерения, включая перегрузку; p99 рассчитан по успешным операциям.", 12)));
+    }
+    private Control BuildDetails()
+    {
+        var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*,16,Auto"), ClipToBounds = true };
+        var tools = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 24, Children = { _all, _resources, _detailCount }, Margin = new Thickness(0, 0, 0, 14) };
+        _detailCount.VerticalAlignment = VerticalAlignment.Center; root.Children.Add(tools);
+        _table.ItemsSource = _details;
+        foreach (var (header, property) in new[] { ("База", nameof(MeasurementRow.Database)), ("Операция", nameof(MeasurementRow.Operation)),
+            ("Повтор", nameof(MeasurementRow.Repeat)), ("Скорость / время", nameof(MeasurementRow.Rate)), ("p99, мс", nameof(MeasurementRow.P99)),
+            ("Ошибки", nameof(MeasurementRow.Errors)), ("Статус", nameof(MeasurementRow.State)) })
+            _table.Columns.Add(new DataGridTextColumn { Header = header, Binding = new Binding(property) });
+        foreach (var (header, property) in new[] { ("Записей", nameof(MeasurementRow.Rows)), ("Клиентов", nameof(MeasurementRow.Clients)) })
+        { var column = new DataGridTextColumn { Header = header, Binding = new Binding(property), IsVisible = false }; _conditionColumns.Add(column); _table.Columns.Add(column); }
+        foreach (var (header, property) in new[] { ("RAM генератора, МБ", nameof(MeasurementRow.ClientRam)), ("RAM базы, МБ", nameof(MeasurementRow.ServerRam)),
+            ("CPU генератора, %", nameof(MeasurementRow.ClientCpu)), ("CPU базы, %", nameof(MeasurementRow.ServerCpu)), ("GC, мс", nameof(MeasurementRow.Gc)),
+            ("Пропуски", nameof(MeasurementRow.Dropped)), ("Запись, МБ", nameof(MeasurementRow.Written)) })
+        { var column = new DataGridTextColumn { Header = header, Binding = new Binding(property), IsVisible = false }; _resourceColumns.Add(column); _table.Columns.Add(column); }
+        _all.Click += (_, _) => { foreach (var c in _conditionColumns) c.IsVisible = _all.IsChecked == true; RefreshPage(); };
+        _resources.Click += (_, _) => { foreach (var c in _resourceColumns) c.IsVisible = _resources.IsChecked == true; };
+        _table.SelectionChanged += (_, _) => { if (_table.SelectedItem is MeasurementRow row) { _detailText.Text = Describe(row.Source); if (!_refreshingDetails) _detailDrawer.IsExpanded = true; } };
+        Grid.SetRow(_table, 1); root.Children.Add(_table); _detailDrawer.Content = _detailText; Grid.SetRow(_detailDrawer, 3); root.Children.Add(_detailDrawer); return root;
+    }
+    private void RefreshDetails()
+    {
+        _refreshingDetails = true; var selected = (_table.SelectedItem as MeasurementRow)?.Source;
+        var slice = _report.Config.Plan is null ? Slice : SliceFor(nameof(Scenario.PointRead));
+        var rows = _all.IsChecked == true ? _data : _data.Where(r => r.DatasetRows == slice.Rows && r.Clients == slice.Clients && r.Stage?.Number == slice.StageNumber).ToArray();
+        _details.Clear();
+        foreach (var r in rows) _details.Add(new(r, Catalog.Get(r.Target).Name, ReportAnalysis.PhaseName(r.Phase) + (r.Stage is { } stage ? " · " + stage.Name : ""), ReportAnalysis.Count(r.DatasetRows), r.Clients.ToString(), r.Repeat.ToString(),
+            ReportAnalysis.Number(ReportAnalysis.Rate(r), ReportAnalysis.RateUnit(r.Phase)), ReportAnalysis.Number(r.ServiceLatency?.P99Ms), ReportAnalysis.Count(r.Errors),
+            r.Cancelled ? "Остановлен" : !r.Verified ? "Не проверен" : r.Errors > 0 ? "Есть ошибки" : "Проверен", ReportAnalysis.Number(r.Client?.RssSampledMaxMb),
+            ReportAnalysis.Number(r.Server?.MemorySampledMaxMb), ReportAnalysis.Number(r.Client?.CpuPercent), ReportAnalysis.Number(r.Server?.CpuMeanPercent),
+            ReportAnalysis.Number(r.Client?.GcPauseMs), ReportAnalysis.Count(r.Dropped), ReportAnalysis.Number(r.Server?.WrittenMb)));
+        _detailCount.Text = _details.Count + " измерений"; _table.SelectedItem = _details.FirstOrDefault(r => r.Source == selected) ?? _details.FirstOrDefault();
+        _refreshingDetails = false;
+    }
+    private static string Describe(PhaseResult r)
+    {
+        var text = $"{Catalog.Get(r.Target).Name} · {ReportAnalysis.PhaseName(r.Phase)} · повтор {r.Repeat}\n"
+            + (r.Stage is { } stage ? $"Этап {stage.Number}. {stage.Name} · {stage.TargetSeconds:0.###} с по плану\n" : "")
+            + (r.Stage?.OperationsPerSecond is { } rate ? $"Целевая частота: {rate:N0} оп./с · запланировано: {r.PlannedOperations:N0}\n" : "")
+            + $"{ReportAnalysis.Count(r.DatasetRows)} записей · {r.Clients} клиентов · {ReportAnalysis.Number(r.ElapsedSeconds, "с")}\n"
+            + ReportAnalysis.PhaseExplanation(r.Phase) + "\n\n"
+            + "Результат: " + ReportAnalysis.Number(ReportAnalysis.Rate(r), ReportAnalysis.RateUnit(r.Phase)) + $"; успешных операций: {r.SuccessfulOperations:N0}; ошибок: {r.Errors:N0}; пропусков: {r.Dropped:N0}.\n"
+            + "Обычный ответ p50: " + ReportAnalysis.Number(r.ServiceLatency?.P50Ms, "мс") + "; медленный ответ p99: " + ReportAnalysis.Number(r.ServiceLatency?.P99Ms, "мс") + ".\n"
+            + "Генератор: RAM " + ReportAnalysis.Number(r.Client?.RssSampledMaxMb, "МБ") + "; CPU " + ReportAnalysis.Number(r.Client?.CpuPercent, "%") + "; GC " + ReportAnalysis.Number(r.Client?.GcPauseMs, "мс") + ".\n"
+            + (r.Target == TargetKind.Sqlite ? "SQLite работает внутри генератора. Отдельных серверных CPU и RAM нет."
+                : "База: RAM " + ReportAnalysis.Number(r.Server?.MemorySampledMaxMb, "МБ") + "; CPU " + ReportAnalysis.Number(r.Server?.CpuMeanPercent, "%") + "; запись на диск " + ReportAnalysis.Number(r.Server?.WrittenMb, "МБ") + ".");
+        if (r.ErrorExamples.Count > 0) text += "\n\n" + string.Join("\n", r.ErrorExamples.Select(e => e.Value + " × " + e.Key)); return text;
+    }
+}

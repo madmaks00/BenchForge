@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BenchForge.Contracts/BenchForge.Contracts.csproj" />
+    <Project Path="src/BenchForge.Worker.CSharp/BenchForge.Worker.CSharp.csproj" />
+    <Project Path="src/BenchForge.Coordinator/BenchForge.Coordinator.csproj" />
+    <Project Path="src/BenchForge.Cli/BenchForge.Cli.csproj" />
+    <Project Path="src/BenchForge.Desktop/BenchForge.Desktop.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BenchForge.Tests/BenchForge.Tests.csproj" />
+  </Folder>
+</Solution>

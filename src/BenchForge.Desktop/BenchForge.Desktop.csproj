@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <ApplicationIcon>Assets/Branding/benchforge.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/Branding/*.png;Assets/Branding/benchforge.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../BenchForge.Coordinator/BenchForge.Coordinator.csproj" />
+    <ProjectReference Include="../BenchForge.Worker.CSharp/BenchForge.Worker.CSharp.csproj" ReferenceOutputAssembly="false" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
+  </ItemGroup>
+</Project>

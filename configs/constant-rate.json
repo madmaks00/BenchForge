@@ -1,0 +1,12 @@
+{
+  "targets": ["postgreSql"],
+  "datasetRows": [100000],
+  "clients": [16, 64],
+  "scenarios": ["pointRead", "mixed"],
+  "repeats": 3,
+  "durationSeconds": 30,
+  "warmupSeconds": 3,
+  "loadModel": "constantRate",
+  "targetOpsPerSecond": 10000,
+  "maxStartLagMs": 20
+}

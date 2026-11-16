@@ -1,0 +1,14 @@
+{
+  "folders": [
+    {
+      "path": ".",
+      "name": "BenchForge"
+    }
+  ],
+  "extensions": {
+    "recommendations": [
+      "ms-dotnettools.csdevkit",
+      "avaloniateam.vscode-avalonia"
+    ]
+  }
+}

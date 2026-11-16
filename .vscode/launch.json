@@ -1,0 +1,4 @@
+{
+  "version": "0.2.0",
+  "configurations": [{ "name": "BenchForge · Avalonia", "type": "coreclr", "request": "launch", "preLaunchTask": "build", "program": "${workspaceFolder}/src/BenchForge.Desktop/bin/Release/net10.0/BenchForge.Desktop.dll", "cwd": "${workspaceFolder}" }]
+}

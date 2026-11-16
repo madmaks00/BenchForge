@@ -1,0 +1,60 @@
+using System.Diagnostics;
+using System.Text.Json;
+using BenchForge.Contracts;
+
+namespace BenchForge.Coordinator;
+
+public interface IWorkerHost
+{
+    Task RunAsync(RunCase run, Func<WireEvent, Task> receive, CancellationToken token);
+}
+
+public sealed class WorkerProcess : IWorkerHost
+{
+    public async Task RunAsync(RunCase run, Func<WireEvent, Task> receive, CancellationToken token)
+    {
+        var info = ProcessUtil.Info(ProcessUtil.Dotnet(), [ProcessUtil.WorkerPath()]);
+        info.RedirectStandardInput = true;
+        using var process = Process.Start(info) ?? throw new InvalidOperationException("Не удалось запустить C#-движок.");
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new WorkerCommand(1, "run", run), Json.Options));
+        await process.StandardInput.FlushAsync();
+        using var lifetime = new CancellationTokenSource();
+        using var registration = token.Register(() => _ = Task.Run(async () =>
+        {
+            try
+            {
+                await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new WorkerCommand(1, "cancel"), Json.Options));
+                await process.StandardInput.FlushAsync();
+                await Task.Delay(TimeSpan.FromSeconds(60), lifetime.Token);
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+            }
+            catch (OperationCanceledException) { }
+            catch { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+        }));
+        var completed = false;
+        string? failure = null;
+        try
+        {
+            while (await process.StandardOutput.ReadLineAsync() is { } line)
+            {
+                if (line.Length > 4 * 1024 * 1024) throw new InvalidDataException("Движок превысил размер сообщения.");
+                var message = JsonSerializer.Deserialize<WireEvent>(line.TrimStart('\uFEFF'), Json.Options) ?? throw new InvalidDataException("Пустое сообщение движка.");
+                if (message.ProtocolVersion != 1 || message.Type != "hello" && message.RunId != run.RunId) throw new InvalidDataException("Неверная версия протокола или ID запуска.");
+                if (message.Type == "completed") completed = true;
+                if (message.Type == "failed") failure = message.Data.GetProperty("message").GetString();
+                await receive(message);
+            }
+            await process.WaitForExitAsync(CancellationToken.None);
+            if (token.IsCancellationRequested) return;
+            if (failure is not null) throw new InvalidOperationException(failure);
+            if (!completed || process.ExitCode != 0)
+            { var error = await stderr; throw new InvalidOperationException("Движок завершился без корректного результата. " + error[..Math.Min(error.Length, 1000)]); }
+        }
+        finally
+        {
+            lifetime.Cancel();
+            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(CancellationToken.None); }
+        }
+    }
+}

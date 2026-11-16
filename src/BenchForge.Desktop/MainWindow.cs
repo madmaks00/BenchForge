@@ -1,12 +1,16 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Avalonia;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
 using Avalonia.Controls;
 using Avalonia.Controls.Chrome;
+using Avalonia.Controls.Presenters;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Media.Immutable;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
@@ -36,7 +40,7 @@ public sealed class MainWindow : Window
 
     public MainWindow()
     {
-        Title = "BenchForge"; Width = 1380; Height = 900; MinWidth = 1024; MinHeight = 720;
+        Title = "BenchForge"; Width = 1120; Height = 760; MinWidth = 1024; MinHeight = 720;
         Icon = BrandIcons.WindowIcon();
         const double headerHeight = 44;
         var combineTitleBar = OperatingSystem.IsWindows();
@@ -49,6 +53,7 @@ public sealed class MainWindow : Window
             Styles.Add(new Style(selector => selector.OfType<WindowDrawnDecorations>().Template()
                 .OfType<Panel>().Name("PART_TitleTextPanel").Child().OfType<TextBlock>())
             { Setters = { new Setter(IsVisibleProperty, false) } });
+            StyleCaptionButtons();
         }
         Background = Ui.B(Ui.Background); Foreground = Ui.B(Ui.Text); FontFamily = new FontFamily("Segoe UI, Inter, sans-serif"); FontSize = 14;
         _reportsRoot = Environment.GetEnvironmentVariable("DBLAB_REPORTS") ?? Path.Combine(ProjectRoot(), "reports");
@@ -110,6 +115,36 @@ public sealed class MainWindow : Window
         };
         Navigate(0);
     }
+
+    private void StyleCaptionButtons()
+    {
+        var idle = new ImmutableSolidColorBrush(Color.Parse(Ui.Hover), 0);
+        foreach (var name in new[] { "PART_MinimizeButton", "PART_MaximizeButton" })
+        {
+            Selector CaptionButton(Selector? selector) => selector.OfType<WindowDrawnDecorations>().Template().OfType<Button>().Name(name);
+            Styles.Add(new Style(CaptionButton)
+            {
+                Setters = { new Setter(BackgroundProperty, Ui.B(Ui.Hover)), new Setter(BorderBrushProperty, Ui.B(Ui.Raised)) }
+            });
+            Styles.Add(new Style(selector => CaptionButton(selector).Template().OfType<ContentPresenter>())
+            {
+                Setters =
+                {
+                    new Setter(ContentPresenter.CornerRadiusProperty, new CornerRadius(6)),
+                    new Setter(TransitionsProperty, new Transitions
+                    {
+                        new BrushTransition { Property = ContentPresenter.BackgroundProperty, Duration = TimeSpan.FromMilliseconds(100), Easing = new CubicEaseOut() }
+                    })
+                }
+            });
+            Styles.Add(new Style(selector => CaptionButton(selector).Not(s => s.Class(":pointerover")).Not(s => s.Class(":pressed"))
+                .Template().OfType<ContentPresenter>())
+            {
+                Setters = { new Setter(ContentPresenter.BackgroundProperty, idle) }
+            });
+        }
+    }
+
     private void Navigate(int page)
     {
         _selected = Math.Clamp(page, 0, 2); _notice.IsVisible = false;

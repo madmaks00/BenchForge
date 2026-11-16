@@ -111,15 +111,16 @@ public sealed class ExperimentSetupView : UserControl
     }
     private Control BuildWorkload()
     {
-        var workload = Ui.Columns("1.4*,16,*,16,*", Ui.Field("Операции", _scenario),
+        ToolTip.SetTip(_hotspot, "Часть ключей будет выбираться чаще остальных, как в базе с популярными записями.");
+        var workload = Ui.Columns("1.4*,16,*,16,*", Ui.Field("Операции", _scenario, "Какие запросы выполнять. План нагрузки повторяется для каждой выбранной операции, которую поддерживает база."),
             Field("rows", "Записей в наборе", "1000", "Можно задать несколько объёмов через запятую"),
             Field("repeats", "Повторов", "1", "Повторы позволяют увидеть разброс результатов"));
         var advanced = Ui.Stack(20,
-            Ui.Columns("*,24,*", Field("payload", "Размер текстового поля, байт", "256"), Field("batch", "Записей в пакете", "100")),
-            Ui.Columns("*,24,*", Field("warmup", "Прогрев, секунд", "1"), Field("seed", "Начальное значение генератора", "42")),
-            Ui.Columns("*,24,*", Field("cpu", "Лимит CPU базы", "2"), Field("memory", "Лимит памяти базы, МБ", "2048")), _hotspot);
+            Ui.Columns("*,24,*", Field("payload", "Размер текстового поля, байт", "256", "Длина текстового поля в каждой синтетической записи."), Field("batch", "Записей в пакете", "100", "Записей на вызов при загрузке и пакетной вставке. При больших полях пакет может быть уменьшен.")),
+            Ui.Columns("*,24,*", Field("warmup", "Прогрев, секунд", "1", "Чтение перед замерами, чтобы разогреть базу. В результатах его нет."), Field("seed", "Начальное значение генератора", "42", "Одинаковое значение воспроизводит одинаковые исходные данные.")),
+            Ui.Columns("*,24,*", Field("cpu", "Лимит CPU базы", "2", "Лимит процессора контейнера. SQLite выполняется без этого лимита."), Field("memory", "Лимит памяти базы, МБ", "2048", "Лимит памяти контейнера. SQLite выполняется без этого лимита.")), _hotspot);
         advanced.Margin = new Thickness(0, 20, 0, 8);
-        return Ui.Scroll(Ui.Stack(16, Ui.Label("Тип теста", 17, Ui.Text, true), _load, workload,
+        return Ui.Scroll(Ui.Stack(16, _load, workload,
             new Expander { Header = "Дополнительные параметры", Content = advanced }));
     }
     private Control Field(string key, string label, string value, string? hint = null)

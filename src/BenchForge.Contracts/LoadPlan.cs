@@ -2,19 +2,21 @@ using System.Text.Json.Serialization;
 
 namespace BenchForge.Contracts;
 
-public enum LoadProfile { Smoke, Steady, Ramp, Spike, Soak, FixedRate }
+public enum LoadProfile { Smoke, Steady, Ramp, Spike, Soak, FixedRate, Custom }
 
 public sealed record LoadStage(string Name, int Clients, double Seconds, int? OperationsPerSecond = null);
 
 public sealed record LoadPlan(LoadProfile Profile, List<LoadStage> Stages)
 {
+    public const int MaxStages = 24;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public LoadGraph? Graph { get; init; }
     [JsonIgnore] public int PeakClients => Stages.Max(stage => stage.Clients);
     [JsonIgnore] public double Seconds => Stages.Sum(stage => stage.Seconds);
 
     public void Validate()
     {
-        if (!Enum.IsDefined(Profile) || Stages is null || Stages.Count is < 1 or > 24)
-            throw new ArgumentException("План должен содержать от 1 до 24 этапов.");
+        if (!Enum.IsDefined(Profile) || Stages is null || Stages.Count is < 1 or > MaxStages)
+            throw new ArgumentException($"План должен содержать от 1 до {MaxStages} этапов.");
         foreach (var stage in Stages)
         {
             if (stage is null || string.IsNullOrWhiteSpace(stage.Name) || stage.Name.Length > 80 || stage.Clients is < 1 or > 2048 ||
@@ -23,6 +25,15 @@ public sealed record LoadPlan(LoadProfile Profile, List<LoadStage> Stages)
             if (stage.OperationsPerSecond is { } rate && stage.Seconds * rate < 1)
                 throw new ArgumentException("Увеличьте время или частоту, чтобы в этапе была хотя бы одна операция.");
         }
+        if (Profile == LoadProfile.Custom ? Graph is null || !Stages.SequenceEqual(Graph.CreateStages()) : Graph is not null)
+            throw new ArgumentException("График нагрузки должен соответствовать сохранённым этапам.");
+    }
+
+    public static LoadPlan FromGraph(LoadGraph graph)
+    {
+        var plan = new LoadPlan(LoadProfile.Custom, graph.CreateStages()) { Graph = graph };
+        plan.Validate();
+        return plan;
     }
 
     public static LoadPlan Single(LoadProfile profile, int clients, double seconds, int? rate = null) =>
@@ -57,6 +68,7 @@ public sealed record LoadPlan(LoadProfile Profile, List<LoadStage> Stages)
         LoadProfile.Spike => "Пиковая нагрузка",
         LoadProfile.Soak => "Длительный тест",
         LoadProfile.FixedRate => "Заданная частота",
+        LoadProfile.Custom => "Свой график",
         _ => throw new ArgumentOutOfRangeException(nameof(profile))
     };
 }

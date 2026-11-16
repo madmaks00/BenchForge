@@ -202,6 +202,37 @@ public sealed class ProcessIntegrationTests
         Assert.Equal(600, soak.Seconds);
         Assert.All(soak.Stages, stage => { Assert.Equal(4, stage.Clients); Assert.Equal(100, stage.Seconds); });
     }
+
+    [Fact]
+    public void GraphCompilesCurvesAndRejectsInconsistentStages()
+    {
+        var graph = new LoadGraph([new(0, 4, 20, LoadCurve.EaseIn, 4), new(20, 20, 100), new(25, 4)], 10);
+        var plan = LoadPlan.FromGraph(graph);
+        Assert.Equal(new[] { 4, 5, 8, 13, 20, 4 }, plan.Stages.Select(stage => stage.Clients));
+        Assert.Equal(new int?[] { 20, 25, 40, 65, 100, null }, plan.Stages.Select(stage => stage.OperationsPerSecond));
+        Assert.Equal(35, plan.Seconds);
+        Assert.Throws<ArgumentException>(() => (plan with { Graph = graph with { FinalSeconds = 9 } }).Validate());
+        Assert.Throws<ArgumentException>(() => LoadPlan.FromGraph(new([new(0, 1), new(0, 2)], 1)));
+        Assert.Throws<ArgumentException>(() => LoadPlan.FromGraph(new([new(0, 1, Curve: LoadCurve.Linear), new(.1, 2)], 1)));
+    }
+
+    [Fact]
+    public async Task CustomGraphRunsCompiledStagesAndPersistsEditablePoints()
+    {
+        using var folder = new Folder();
+        var graph = new LoadGraph([new(0, 1, 60, LoadCurve.Linear, 2), new(.4, 3, 100), new(.6, 1)], .2);
+        var config = new BenchmarkConfig { DatasetRows = [100], Repeats = 1, WarmupSeconds = 0, Plan = LoadPlan.FromGraph(graph) };
+        var result = await new ExperimentRunner().RunAsync(config, folder.PathValue, CancellationToken.None);
+        Assert.Equal("completed", result.Report.Status);
+        var measured = result.Report.Results.Where(row => row.Stage is not null).ToArray();
+        Assert.Equal(new[] { 1, 2, 3, 1 }, measured.Select(row => row.Clients));
+        Assert.Equal(new int?[] { 60, 80, 100, null }, measured.Select(row => row.Stage!.OperationsPerSecond));
+        Assert.Equal(new long[] { 12, 16, 20 }, measured.Take(3).Select(row => row.PlannedOperations));
+        var saved = JsonSerializer.Deserialize<BenchmarkReport>(await File.ReadAllTextAsync(Path.Combine(result.Folder, "report.json")), Json.Options)!;
+        saved.Config.Validate();
+        Assert.Equal(graph.Points.ToArray(), saved.Config.Plan!.Graph!.Points.ToArray());
+        Assert.Equal(graph.FinalSeconds, saved.Config.Plan.Graph.FinalSeconds);
+    }
     [Fact] public async Task CancellationSavesPartialReportAndCleansOwnedDatabase()
     {
         using var folder = new Folder(); using var cancel = new CancellationTokenSource();

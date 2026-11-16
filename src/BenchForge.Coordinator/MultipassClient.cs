@@ -15,7 +15,7 @@ public sealed class MultipassClient : IVmCommandClient
 {
     public async Task<string> RunAsync(string[] arguments, CancellationToken token, int timeoutSeconds = 120)
     {
-        try { return await ProcessUtil.RunAsync(ProcessUtil.Multipass(), arguments, token, timeoutSeconds); }
+        try { return await ProcessUtil.RunAsync(ProcessUtil.Multipass(), arguments, token, timeoutSeconds, StorageEnvironment()); }
         catch (Win32Exception error) when (error.NativeErrorCode is 2 or 3)
         { throw new InvalidOperationException("Установите Multipass версии 1.15 или новее для запуска чистых VM.", error); }
     }
@@ -23,7 +23,7 @@ public sealed class MultipassClient : IVmCommandClient
     public async Task<int> RunGuestAsync(string[] arguments, Func<RunUpdate, Task> receive, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        var info = ProcessUtil.Info(ProcessUtil.Multipass(), arguments);
+        var info = ProcessUtil.Info(ProcessUtil.Multipass(), arguments, StorageEnvironment());
         info.RedirectStandardInput = true;
         using var process = Process.Start(info) ?? throw new InvalidOperationException("Не удалось запустить агент в VM.");
         var stderr = process.StandardError.ReadToEndAsync();
@@ -70,5 +70,14 @@ public sealed class MultipassClient : IVmCommandClient
                 await receive(update);
             }
         }
+    }
+
+    private static IReadOnlyDictionary<string, string>? StorageEnvironment()
+    {
+        // Editors opened before storage setup still inherit the old Windows environment.
+        var storage = Environment.GetEnvironmentVariable("MULTIPASS_STORAGE");
+        if (string.IsNullOrWhiteSpace(storage) && OperatingSystem.IsWindows())
+            storage = Environment.GetEnvironmentVariable("MULTIPASS_STORAGE", EnvironmentVariableTarget.Machine);
+        return string.IsNullOrWhiteSpace(storage) ? null : new Dictionary<string, string> { ["MULTIPASS_STORAGE"] = storage };
     }
 }

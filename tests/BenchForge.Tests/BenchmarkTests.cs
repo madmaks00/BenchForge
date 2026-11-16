@@ -233,6 +233,35 @@ public sealed class ProcessIntegrationTests
         Assert.Equal(graph.Points.ToArray(), saved.Config.Plan!.Graph!.Points.ToArray());
         Assert.Equal(graph.FinalSeconds, saved.Config.Plan.Graph.FinalSeconds);
     }
+
+    [Fact]
+    public void CustomGraphAllowsMoreThanTwentyFourTransitionSteps()
+    {
+        var graph = new LoadGraph([new(0, 4, Curve: LoadCurve.Linear, Steps: 48), new(24, 52)], 1);
+        var plan = LoadPlan.FromGraph(graph);
+        Assert.Equal(49, plan.Stages.Count);
+        Assert.Equal(Enumerable.Range(4, 49), plan.Stages.Select(stage => stage.Clients));
+        Assert.Equal(25, plan.Seconds);
+        var tooShort = graph with { Points = [graph.Points[0] with { Steps = 481 }, graph.Points[1]] };
+        Assert.Contains("0,05", Assert.Throws<ArgumentException>(() => LoadPlan.FromGraph(tooShort)).Message);
+    }
+
+    [Fact]
+    public async Task CustomGraphRunsAndSavesMoreThanTwentyFourPoints()
+    {
+        using var folder = new Folder();
+        var graph = new LoadGraph(Enumerable.Range(0, 30).Select(i => new LoadPoint(i * .05, 1)).ToArray(), .05);
+        var config = new BenchmarkConfig { DatasetRows = [100], Repeats = 1, WarmupSeconds = 0, Plan = LoadPlan.FromGraph(graph) };
+        var result = await new ExperimentRunner().RunAsync(config, folder.PathValue, CancellationToken.None);
+        Assert.Equal("completed", result.Report.Status);
+        var measured = result.Report.Results.Where(row => row.Stage is not null).ToArray();
+        Assert.Equal(30, measured.Length);
+        Assert.Equal(Enumerable.Range(1, 30), measured.Select(row => row.Stage!.Number));
+        Assert.All(measured, row => Assert.True(row.Verified));
+        var saved = JsonSerializer.Deserialize<BenchmarkReport>(await File.ReadAllTextAsync(Path.Combine(result.Folder, "report.json")), Json.Options)!;
+        saved.Config.Validate();
+        Assert.Equal(graph.Points.ToArray(), saved.Config.Plan!.Graph!.Points.ToArray());
+    }
     [Fact] public async Task CancellationSavesPartialReportAndCleansOwnedDatabase()
     {
         using var folder = new Folder(); using var cancel = new CancellationTokenSource();

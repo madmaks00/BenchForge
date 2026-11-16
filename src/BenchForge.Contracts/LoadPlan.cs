@@ -9,18 +9,21 @@ public sealed record LoadStage(string Name, int Clients, double Seconds, int? Op
 public sealed record LoadPlan(LoadProfile Profile, List<LoadStage> Stages)
 {
     public const int MaxStages = 24;
+    public const double MinStageSeconds = .05;
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public LoadGraph? Graph { get; init; }
     [JsonIgnore] public int PeakClients => Stages.Max(stage => stage.Clients);
     [JsonIgnore] public double Seconds => Stages.Sum(stage => stage.Seconds);
 
     public void Validate()
     {
-        if (!Enum.IsDefined(Profile) || Stages is null || Stages.Count is < 1 or > MaxStages)
-            throw new ArgumentException($"План должен содержать от 1 до {MaxStages} этапов.");
+        if (!Enum.IsDefined(Profile) || Stages is null || Stages.Count < 1)
+            throw new ArgumentException("План должен содержать хотя бы один интервал нагрузки.");
+        if (Profile != LoadProfile.Custom && Stages.Count > MaxStages)
+            throw new ArgumentException($"Готовый режим должен содержать до {MaxStages} этапов.");
         foreach (var stage in Stages)
         {
             if (stage is null || string.IsNullOrWhiteSpace(stage.Name) || stage.Name.Length > 80 || stage.Clients is < 1 or > 2048 ||
-                !double.IsFinite(stage.Seconds) || stage.Seconds is < .05 or > 3600 || stage.OperationsPerSecond is < 1 or > 10_000_000)
+                !double.IsFinite(stage.Seconds) || stage.Seconds is < MinStageSeconds or > 3600 || stage.OperationsPerSecond is < 1 or > 10_000_000)
                 throw new ArgumentException("Проверьте этапы: 1–2048 клиентов, 0,05–3600 секунд, до 10 млн операций/с.");
             if (stage.OperationsPerSecond is { } rate && stage.Seconds * rate < 1)
                 throw new ArgumentException("Увеличьте время или частоту, чтобы в этапе была хотя бы одна операция.");

@@ -17,7 +17,7 @@ internal sealed class LoadGraphEditor : UserControl
     private readonly NumericUpDown _time = Number(0, LoadGraph.MaxTimeSeconds, .5m);
     private readonly NumericUpDown _clients = Number(1, 2048, 1);
     private readonly NumericUpDown _rate = Number(0, 10_000_000, 1);
-    private readonly NumericUpDown _steps = Number(2, LoadGraph.MaxSegmentSteps, 1);
+    private readonly NumericUpDown _steps = Number(2, int.MaxValue, 1);
     private readonly NumericUpDown _final = Number(.05m, 3600, .5m);
     private readonly Button _add;
     private readonly Button _remove;
@@ -38,7 +38,7 @@ internal sealed class LoadGraphEditor : UserControl
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, Children = { _add, _remove } };
         var picker = Ui.Columns("*,12,Auto", _pointPicker, actions);
         _curveField = Ui.Field("Переход к следующей точке", _curve);
-        _stepField = Field("Ступеней перехода", _steps, "Чем больше ступеней, тем ближе фактическая нагрузка к кривой. В плане может быть до 24 этапов.");
+        _stepField = Field("Ступеней перехода", _steps, "Каждая ступень — интервал с постоянной нагрузкой. Больше ступеней — точнее кривая. На интервал должно приходиться хотя бы 0,05 с.");
         Content = Ui.Stack(10,
             Ui.Label("Нажмите на график, чтобы добавить точку. Перетащите маркер, чтобы изменить время и число клиентов.", 13),
             _chart, Ui.Label("Пунктир — заданная кривая. Коралловая линия — ступени, которые выполнит движок.", 12),
@@ -107,7 +107,6 @@ internal sealed class LoadGraphEditor : UserControl
 
     private void Add(double time, int clients)
     {
-        if (_points.Count == LoadGraph.MaxPoints) { SetStatus($"В графике может быть до {LoadGraph.MaxPoints} точек.", true); return; }
         var index = _points.FindIndex(point => point.TimeSeconds > time);
         if (index < 0) index = _points.Count;
         var min = index == 0 ? MinGap : (decimal)_points[index - 1].TimeSeconds + MinGap;
@@ -147,7 +146,6 @@ internal sealed class LoadGraphEditor : UserControl
         _pointPicker.SelectedIndex = _selected;
         _updating = false;
         _remove.IsEnabled = _selected > 0;
-        _add.IsEnabled = _points.Count < LoadGraph.MaxPoints;
         _curveField.IsVisible = _selected < _points.Count - 1;
         _stepField.IsVisible = _curveField.IsVisible && _points[_selected].Curve != LoadCurve.Hold;
         var graph = new LoadGraph([.. _points], (double)(_final.Value ?? 0));
@@ -155,7 +153,7 @@ internal sealed class LoadGraphEditor : UserControl
         {
             var plan = Read();
             _chart.Update(graph, plan.Stages, _selected);
-            SetStatus($"{plan.Seconds:0.##} с на операцию · этапов {plan.Stages.Count} из {LoadPlan.MaxStages}", false);
+            SetStatus($"{plan.Seconds:0.##} с на операцию · точек {_points.Count} · интервалов нагрузки {plan.Stages.Count}", false);
         }
         catch (ArgumentException error)
         {

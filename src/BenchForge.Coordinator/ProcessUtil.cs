@@ -42,7 +42,10 @@ public static class ProcessUtil
     public static async Task<string> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken token,
         int timeoutSeconds = 30, IReadOnlyDictionary<string, string>? environment = null)
     {
-        using var process = Process.Start(Info(executable, arguments, environment)) ?? throw new InvalidOperationException("Не удалось запустить процесс.");
+        var info = Info(executable, arguments, environment);
+        info.RedirectStandardInput = true;
+        using var process = Process.Start(info) ?? throw new InvalidOperationException("Не удалось запустить процесс.");
+        process.StandardInput.Close();
         var output = process.StandardOutput.ReadToEndAsync(); var errors = process.StandardError.ReadToEndAsync();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         try { await process.WaitForExitAsync(timeout.Token); }

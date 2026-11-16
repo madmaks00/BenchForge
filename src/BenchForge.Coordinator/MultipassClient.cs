@@ -40,12 +40,13 @@ public sealed class MultipassClient : IVmCommandClient
                 {
                     await process.StandardInput.WriteLineAsync("cancel");
                     await process.StandardInput.FlushAsync();
+                    process.StandardInput.Close();
                 }
                 catch (IOException) { }
                 if (await Task.WhenAny(exit, Task.Delay(TimeSpan.FromSeconds(75))) != exit)
                     process.Kill(entireProcessTree: true);
             }
-            else if (first == read) await read;
+            else if (first == read) { await read; process.StandardInput.Close(); }
             await exit.WaitAsync(TimeSpan.FromSeconds(30));
             await read;
             var error = await stderr;

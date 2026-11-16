@@ -17,7 +17,7 @@ public sealed class MongoDatabase(RunCase run) : IDatabase
         {
             Server = new MongoServerAddress(ep.Host, ep.Port), Credential = MongoCredential.CreateCredential("admin", ep.Username, ep.Password),
             ConnectTimeout = TimeSpan.FromSeconds(5), ServerSelectionTimeout = TimeSpan.FromSeconds(5), SocketTimeout = TimeSpan.FromMinutes(10),
-            RetryWrites = false, MaxConnectionPoolSize = Math.Max(4, run.Clients + 2),
+            RetryWrites = false, MaxConnectionPoolSize = (int)Math.Max(4L, Math.Min(int.MaxValue, (long)run.Clients + 2)),
             WriteConcern = WriteConcern.W1.With(journal: true, wTimeout: TimeSpan.FromSeconds(10))
         });
         _db = _client.GetDatabase(ep.Database);
@@ -43,7 +43,7 @@ public sealed class MongoDatabase(RunCase run) : IDatabase
         var build = await _db.RunCommandAsync<BsonDocument>(new BsonDocument("buildInfo", 1), cancellationToken: token);
         return new("csharp", RuntimeInformation.FrameworkDescription, DriverIdentity.Of(typeof(MongoClient)), build["version"].AsString,
             new() { ["write_concern"] = "w=1,j=true", ["retry_writes"] = "false", ["topology"] = "standalone",
-                ["connections"] = $"shared driver pool, max={Math.Max(4, run.Clients + 2)}; clients are logical operations" });
+                ["connections"] = $"shared driver pool, max={_client.Settings.MaxConnectionPoolSize}; clients are logical operations" });
     }
     public Task<IClientSession> OpenSessionAsync(CancellationToken token) => Task.FromResult<IClientSession>(new Session(Collection));
     public ValueTask DisposeAsync() { _client?.Dispose(); return ValueTask.CompletedTask; }

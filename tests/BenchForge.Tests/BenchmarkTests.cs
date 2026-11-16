@@ -61,6 +61,26 @@ public sealed class DataAndMetricsTests
             new BenchmarkConfig { Clients = [1, 1] }, new BenchmarkConfig { DatasetRows = [99] }, new BenchmarkConfig { PayloadBytes = 0 },
             new BenchmarkConfig { Targets = [(TargetKind)999] } }) Assert.Throws<ArgumentException>(config.Validate);
     }
+
+    [Theory]
+    [InlineData(5000)]
+    [InlineData(100_000)]
+    [InlineData(int.MaxValue)]
+    public void LargeClientCountsAreAcceptedInEveryLoadProfile(int clients)
+    {
+        new BenchmarkConfig { Clients = [clients] }.Validate();
+        foreach (var profile in new[] { LoadProfile.Smoke, LoadProfile.Steady, LoadProfile.FixedRate })
+            LoadPlan.Single(profile, clients, 1, profile == LoadProfile.FixedRate ? 100 : null).Validate();
+        var ramp = LoadPlan.Ramp(1, clients, 5, 1);
+        ramp.Validate();
+        Assert.Equal(clients, ramp.PeakClients);
+        Assert.Equal(clients, ramp.Stages[^1].Clients);
+        LoadPlan.Spike(1, clients, 1, 1, 1).Validate();
+        LoadPlan.Soak(clients, 2, 2).Validate();
+        var graph = LoadPlan.FromGraph(new([new(0, 1, Curve: LoadCurve.Linear), new(4, clients)], 1));
+        graph.Validate();
+        Assert.Equal(clients, graph.PeakClients);
+    }
     [Fact] public void CapabilitiesDistinguishDatabaseFamiliesAndPlannedEngines()
     {
         Assert.Equal(8, Catalog.Targets.Length); Assert.Equal(6, Engines.All.Length);
@@ -114,6 +134,20 @@ public sealed class EngineTests
         Assert.True(result.Dropped > 0); Assert.True(result.SuccessfulOperations > 0);
         Assert.Equal(15000, result.PlannedOperations); Assert.Equal(result.PlannedOperations, result.SuccessfulOperations + result.Errors + result.Dropped);
         Assert.True(result.EndToEndLatency!.MeanMs >= result.ServiceLatency!.MeanMs);
+    }
+
+    [Fact]
+    public async Task EngineRunsWithMoreThan2048Clients()
+    {
+        var config = new BenchmarkConfig { DatasetRows = [100], Clients = [2500], LoadModel = LoadModel.ConstantRate,
+            TargetOpsPerSecond = 200, DurationSeconds = .05 };
+        config.Validate();
+        var engine = new BenchmarkEngine(Case(config) with { Target = TargetKind.Redis }, new ProtocolWriter(TextWriter.Null));
+        var result = await engine.MeasureAsync(new FakeDatabase(), Scenario.PointRead, config.DurationSeconds, CancellationToken.None, false);
+        Assert.Equal(2500, result.Clients);
+        Assert.Equal(10, result.PlannedOperations);
+        Assert.Equal(result.PlannedOperations, result.SuccessfulOperations + result.Errors + result.Dropped);
+        Assert.Equal(0, result.Errors);
     }
 }
 

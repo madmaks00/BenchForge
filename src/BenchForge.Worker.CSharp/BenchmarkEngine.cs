@@ -150,8 +150,10 @@ public sealed class BenchmarkEngine(RunCase run, ProtocolWriter writer)
         public async Task EnsureAsync(IDatabase database, int count, CancellationToken token)
         {
             if (_opened >= count) return;
-            await Task.WhenAll(Enumerable.Range(_opened, count - _opened)
-                .Select(async i => { Sessions[i] = await database.OpenSessionAsync(token); }));
+            // Limit the connection handshake burst while preparing every requested client.
+            await Parallel.ForEachAsync(Enumerable.Range(_opened, count - _opened),
+                new ParallelOptions { MaxDegreeOfParallelism = 32, CancellationToken = token },
+                async (index, cancellation) => { Sessions[index] = await database.OpenSessionAsync(cancellation); });
             _opened = count;
         }
 
@@ -173,7 +175,7 @@ public sealed class BenchmarkEngine(RunCase run, ProtocolWriter writer)
         LoadStageResult? stage, CancellationToken token, bool progress)
     {
         ThreadPool.GetMinThreads(out var workerThreads, out var ioThreads);
-        if (run.Target == TargetKind.Sqlite) ThreadPool.SetMinThreads(Math.Max(workerThreads, Math.Min(256, clients + 4)), ioThreads);
+        if (run.Target == TargetKind.Sqlite) ThreadPool.SetMinThreads(Math.Max(workerThreads, Math.Min(252, clients) + 4), ioThreads);
         var counters = Enumerable.Range(0, clients).Select(_ => new Counters()).ToArray();
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

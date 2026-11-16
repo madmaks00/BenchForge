@@ -12,10 +12,11 @@ namespace BenchForge.Worker.CSharp.Databases;
 // This uses the documented ClickHouse HTTP API, not an unlabelled substitute for native TCP.
 public sealed class ClickHouseDatabase(RunCase run) : IDatabase
 {
+    private readonly int _connectionLimit = (int)Math.Min(int.MaxValue, (long)run.Clients + 2);
     private HttpClient _http = null!;
     public async Task InitializeAsync(CancellationToken token)
     {
-        _http = new HttpClient(new SocketsHttpHandler { MaxConnectionsPerServer = run.Clients + 2, AutomaticDecompression = DecompressionMethods.None })
+        _http = new HttpClient(new SocketsHttpHandler { MaxConnectionsPerServer = _connectionLimit, AutomaticDecompression = DecompressionMethods.None })
         { BaseAddress = new Uri($"http://{run.Endpoint.Host}:{run.Endpoint.Port}/"), Timeout = TimeSpan.FromMinutes(10) };
         var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes(run.Endpoint.Username + ":" + run.Endpoint.Password));
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", auth);
@@ -56,7 +57,7 @@ public sealed class ClickHouseDatabase(RunCase run) : IDatabase
         var version = (await QueryAsync("SELECT version() FORMAT TabSeparated", null, token)).Trim();
         return new("csharp", RuntimeInformation.FrameworkDescription, DriverIdentity.Of(typeof(HttpClient)), version,
             new() { ["transport"] = "HTTP / JSONEachRow / uncompressed / .NET HttpClient", ["table"] = "MergeTree ORDER BY id; no unique constraint",
-                ["insert"] = "synchronous HTTP insert; async_insert=0 (server default)", ["connections"] = $"HTTP pool max={run.Clients + 2}" });
+                ["insert"] = "synchronous HTTP insert; async_insert=0 (server default)", ["connections"] = $"HTTP pool max={_connectionLimit}" });
     }
     public Task<IClientSession> OpenSessionAsync(CancellationToken token) => Task.FromResult<IClientSession>(new Session(this, run));
     public ValueTask DisposeAsync() { _http?.Dispose(); return ValueTask.CompletedTask; }

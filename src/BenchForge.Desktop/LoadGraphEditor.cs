@@ -15,7 +15,7 @@ internal sealed class LoadGraphEditor : UserControl
     private readonly ComboBox _pointPicker = new();
     private readonly ComboBox _curve = new() { ItemsSource = new[] { "Удержание и скачок", "Линейная", "С разгоном", "С замедлением", "Плавный переход" } };
     private readonly NumericUpDown _time = Number(0, LoadGraph.MaxTimeSeconds, .5m);
-    private readonly NumericUpDown _clients = Number(1, 2048, 1);
+    private readonly NumericUpDown _clients = Number(1, int.MaxValue, 1);
     private readonly NumericUpDown _rate = Number(0, 10_000_000, 1);
     private readonly NumericUpDown _steps = Number(2, int.MaxValue, 1);
     private readonly NumericUpDown _final = Number(.05m, 3600, .5m);

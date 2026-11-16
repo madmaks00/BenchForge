@@ -27,7 +27,7 @@ public sealed record LoadGraph(IReadOnlyList<LoadPoint> Points, double FinalSeco
         foreach (var point in Points)
         {
             if (point is null || !double.IsFinite(point.TimeSeconds) || point.TimeSeconds <= previousTime || point.TimeSeconds > MaxTimeSeconds ||
-                point.Clients is < 1 or > 2048 || point.OperationsPerSecond is < 1 or > 10_000_000 ||
+                point.Clients < 1 || point.OperationsPerSecond is < 1 or > 10_000_000 ||
                 !Enum.IsDefined(point.Curve) || point.Steps < 2)
                 throw new ArgumentException("Проверьте время, число клиентов, частоту и число ступеней в точках графика.");
             previousTime = point.TimeSeconds;

@@ -151,17 +151,17 @@ internal sealed class LoadGraphChart : Control
     {
         var finish = _graph.Points[^1].TimeSeconds + _graph.FinalSeconds;
         var seconds = finish < 4 ? Math.Max(1, finish) : Math.Ceiling(finish / 4) * 4;
-        var clients = Math.Max(8, ((int)Math.Ceiling(_graph.Points.Max(p => p.Clients) * 1.125 / 4)) * 4);
+        var clients = Math.Max(8, Math.Ceiling(_graph.Points.Max(p => p.Clients) * 1.125 / 4) * 4);
         return new(new Rect(43, 27, Math.Max(1, Bounds.Width - 86), Bounds.Height - 55), seconds, clients);
     }
 
-    private readonly record struct Axes(Rect Plot, double Seconds, int Clients)
+    private readonly record struct Axes(Rect Plot, double Seconds, double Clients)
     {
         public Point Position(double time, double clients) =>
             new(Plot.X + Plot.Width * time / Seconds, Plot.Bottom - Plot.Height * clients / Clients);
 
         public (double Time, int Clients) Values(Point position) => (
             Math.Round(Math.Clamp((position.X - Plot.X) / Plot.Width, 0, 1) * Seconds, 2),
-            Math.Clamp((int)Math.Round(Math.Clamp((Plot.Bottom - position.Y) / Plot.Height, 0, 1) * Clients), 1, 2048));
+            (int)Math.Clamp(Math.Round(Math.Clamp((Plot.Bottom - position.Y) / Plot.Height, 0, 1) * Clients), 1, int.MaxValue));
     }
 }

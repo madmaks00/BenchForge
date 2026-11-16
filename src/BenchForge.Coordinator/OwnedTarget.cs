@@ -31,19 +31,19 @@ public sealed class OwnedTarget(TargetKind target, BenchmarkConfig config, strin
         _container = "dblab-" + target.ToString().ToLowerInvariant() + "-" + caseId[..12];
         var args = new List<string> { "run", "--detach", "--rm", "--name", _container, "--label", "dblab.case=" + caseId,
             "--cpus", config.CpuLimit.ToString(CultureInfo.InvariantCulture), "--memory", config.MemoryMb + "m", "--memory-swap", config.MemoryMb + "m",
-            "--pids-limit", Math.Max(1024, peakClients * 4 + 128).ToString(CultureInfo.InvariantCulture), "-p", $"127.0.0.1::{info.Port}" };
+            "--pids-limit", Math.Max(1024L, (long)peakClients * 4 + 128).ToString(CultureInfo.InvariantCulture), "-p", $"127.0.0.1::{info.Port}" };
         var command = new List<string>();
         void Env(string name, string value) { environment[name] = value; args.Add("-e"); args.Add(name); }
         switch (target)
         {
             case TargetKind.PostgreSql:
                 Env("POSTGRES_DB", "dblab"); Env("POSTGRES_USER", "dblab"); Env("POSTGRES_PASSWORD", password);
-                command.AddRange(["postgres", "-c", "max_connections=" + (peakClients + 16)]); break;
+                command.AddRange(["postgres", "-c", "max_connections=" + ((long)peakClients + 16)]); break;
             case TargetKind.MySql: case TargetKind.MariaDb:
                 var prefix = target == TargetKind.MySql ? "MYSQL_" : "MARIADB_";
                 Env(prefix + "DATABASE", "dblab"); Env(prefix + "USER", "dblab"); Env(prefix + "PASSWORD", password);
                 Env(prefix + "ROOT_PASSWORD", Convert.ToHexString(RandomNumberGenerator.GetBytes(24)));
-                command.Add("--max-connections=" + (peakClients + 16)); break;
+                command.Add("--max-connections=" + ((long)peakClients + 16)); break;
             case TargetKind.MongoDb:
                 Env("MONGO_INITDB_ROOT_USERNAME", "dblab"); Env("MONGO_INITDB_ROOT_PASSWORD", password); break;
             case TargetKind.Redis: case TargetKind.Valkey:

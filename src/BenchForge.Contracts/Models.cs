@@ -74,8 +74,8 @@ public sealed record BenchmarkConfig
             throw new ArgumentException("Выберите СУБД без повторов.");
         if (DatasetRows.Count == 0 || DatasetRows.Count > 16 || DatasetRows.Distinct().Count() != DatasetRows.Count || DatasetRows.Any(n => n is < 100 or > 100_000_000))
             throw new ArgumentException("Объёмы данных: уникальные числа от 100 до 100 000 000 (до 16 значений).");
-        if (Clients.Count == 0 || Clients.Count > 16 || Clients.Distinct().Count() != Clients.Count || Clients.Any(n => n is < 1 or > 2048))
-            throw new ArgumentException("Число клиентов: уникальные числа от 1 до 2048 (до 16 значений).");
+        if (Clients.Count == 0 || Clients.Count > 16 || Clients.Distinct().Count() != Clients.Count || Clients.Any(n => n < 1))
+            throw new ArgumentException("Число клиентов: положительные целые числа без повторов (до 16 значений).");
         Plan?.Validate();
         if (Scenarios.Any(s => !Enum.IsDefined(s)) || Scenarios.Distinct().Count() != Scenarios.Count)
             throw new ArgumentException("Неизвестный или повторяющийся сценарий.");

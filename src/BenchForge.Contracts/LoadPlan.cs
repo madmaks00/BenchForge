@@ -22,9 +22,9 @@ public sealed record LoadPlan(LoadProfile Profile, List<LoadStage> Stages)
             throw new ArgumentException($"Готовый режим должен содержать до {MaxStages} этапов.");
         foreach (var stage in Stages)
         {
-            if (stage is null || string.IsNullOrWhiteSpace(stage.Name) || stage.Name.Length > 80 || stage.Clients is < 1 or > 2048 ||
+            if (stage is null || string.IsNullOrWhiteSpace(stage.Name) || stage.Name.Length > 80 || stage.Clients < 1 ||
                 !double.IsFinite(stage.Seconds) || stage.Seconds is < MinStageSeconds or > 3600 || stage.OperationsPerSecond is < 1 or > 10_000_000)
-                throw new ArgumentException("Проверьте этапы: 1–2048 клиентов, 0,05–3600 секунд, до 10 млн операций/с.");
+                throw new ArgumentException("Проверьте этапы: положительное число клиентов, 0,05–3600 секунд, до 10 млн операций/с.");
             if (stage.OperationsPerSecond is { } rate && stage.Seconds * rate < 1)
                 throw new ArgumentException("Увеличьте время или частоту, чтобы в этапе была хотя бы одна операция.");
         }
@@ -44,10 +44,10 @@ public sealed record LoadPlan(LoadProfile Profile, List<LoadStage> Stages)
 
     public static LoadPlan Ramp(int start, int peak, int steps, double secondsPerStep)
     {
-        if (start < 1 || peak > 2048 || steps is < 2 or > 12 || peak - (long)start < steps - 1)
+        if (start < 1 || steps is < 2 or > 12 || peak - (long)start < steps - 1)
             throw new ArgumentException("Для роста задайте от 2 до 12 ступеней и достаточно высокий пик, чтобы нагрузка росла на каждой ступени.");
         var stages = Enumerable.Range(0, steps).Select(index => new LoadStage($"Ступень {index + 1}",
-            start + (int)Math.Round((peak - start) * index / (double)(steps - 1)), secondsPerStep)).ToList();
+            start + (int)Math.Round((peak - (double)start) * index / (steps - 1)), secondsPerStep)).ToList();
         return new(LoadProfile.Ramp, stages);
     }
 

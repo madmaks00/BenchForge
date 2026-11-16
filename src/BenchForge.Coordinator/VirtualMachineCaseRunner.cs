@@ -40,6 +40,8 @@ public sealed class VirtualMachineCaseRunner(IVmCommandClient? commands = null) 
             await _commands.RunAsync(["clone", options.Template, "--name", name], CancellationToken.None, 600);
             token.ThrowIfCancellationRequested();
             await _commands.RunAsync(["start", name, "--timeout", "300"], token, 360);
+            await receive(new("log", "Ожидание завершения настройки гостевой ОС"));
+            await _commands.RunAsync(["exec", name, "--", "sudo", "-n", "cloud-init", "status", "--wait", "--long"], token, 600);
             var marker = await _commands.RunAsync(["exec", name, "--", "cat", "/etc/benchforge-template"], token);
             if (marker != VirtualMachineTemplate.TemplateMarker) throw new InvalidDataException("VM создана из неподготовленного шаблона.");
             var bootId = await _commands.RunAsync(["exec", name, "--", "cat", "/proc/sys/kernel/random/boot_id"], token);
@@ -74,8 +76,16 @@ public sealed class VirtualMachineCaseRunner(IVmCommandClient? commands = null) 
             // Collect a partial report even after cancellation, before deleting the VM.
             var collected = Path.Combine(temp, "collected");
             Directory.CreateDirectory(collected);
-            await _commands.RunAsync(["transfer", "--recursive", name + ":" + guestFolder, collected], CancellationToken.None, 300);
-            var guestCopy = Path.Combine(collected, guestFolder.Split('/')[^1]);
+            var reportArchive = GuestRoot + "/report.tar.gz";
+            await _commands.RunAsync(["exec", name, "--", "sh", "-c", "cd \"$1\" && tar -czf \"$2\" -- report.json resources-*.json", "--", guestFolder, reportArchive], CancellationToken.None, 300);
+            var download = Path.Combine(temp, "report.tar.gz");
+            // ASCII encoding prevents Windows console newline conversion from corrupting gzip bytes.
+            var encoded = await _commands.RunAsync(["exec", name, "--", "base64", "-w0", reportArchive], CancellationToken.None, 300);
+            await File.WriteAllBytesAsync(download, Convert.FromBase64String(encoded));
+            await using (var file = File.OpenRead(download))
+            await using (var gzip = new GZipStream(file, CompressionMode.Decompress))
+                await TarFile.ExtractToDirectoryAsync(gzip, collected, overwriteFiles: false);
+            var guestCopy = collected;
             var guestReport = JsonSerializer.Deserialize<BenchmarkReport>(await File.ReadAllTextAsync(Path.Combine(guestCopy, "report.json")), Json.Options)
                 ?? throw new InvalidDataException("Пустой отчёт VM.");
             if (guestReport.Config.Targets.Count != 1 || guestReport.Config.Targets[0] != target || guestReport.Results.Any(row => row.Target != target || row.DatasetRows != rows))

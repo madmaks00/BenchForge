@@ -83,7 +83,7 @@ public static class Ui
         if (primary)
         {
             button.Background = B(pressed ? "#e85e5b" : hover ? "#ff7773" : Accent);
-            button.Foreground = B("#30184d");
+            button.Foreground = B("#241415");
             return;
         }
 

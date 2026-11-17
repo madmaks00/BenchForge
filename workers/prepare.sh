@@ -23,7 +23,16 @@ for engine in "${engines[@]}"; do
   case "$engine" in
     python)
       cp -- "$root"/python/*.py "$target/"
-      python3 -m pip install --disable-pip-version-check --only-binary=:all: --target "$target/vendor" -r "$root/python/requirements.lock.txt"
+      pip_formats=(--only-binary=:all:)
+      # cryptography no longer ships a CPython wheel for Intel macOS.
+      if [[ "$os-$arch" == osx-x64 ]]; then
+        pip_formats+=(--no-binary=cryptography)
+        if [[ -z "${OPENSSL_DIR:-}" ]] && command -v brew >/dev/null; then
+          openssl_dir="$(brew --prefix openssl@3)"
+          if [[ -d "$openssl_dir" ]]; then export OPENSSL_DIR="$openssl_dir"; fi
+        fi
+      fi
+      python3 -m pip install --disable-pip-version-check "${pip_formats[@]}" --target "$target/vendor" -r "$root/python/requirements.lock.txt"
       python3 "$target/worker.py" --self-test
       ;;
     node)

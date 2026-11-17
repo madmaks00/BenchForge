@@ -2,7 +2,7 @@
 
 Настольное приложение на C# / .NET 10 / Avalonia с отдельными процессами генераторов нагрузки.
 
-Реализованы **C#, Java, Python, Rust, Node.js / JavaScript и Go**. Каждый движок выполняет нагрузку на своём языке через свои драйверы. SQL Server пока доступен только в C#. C# выбран по умолчанию; другие языки включаются в **Нагрузка → Движки нагрузки**. [Исходники, подготовка и условия сравнения](workers/README.md).
+Реализованы **C#, Java, Python, Rust, Node.js / JavaScript и Go**. Каждый движок выполняет нагрузку на своём языке через свои драйверы. SQL Server, DuckDB, Oracle, CockroachDB, Elasticsearch и OpenSearch пока доступны только в C#. C# выбран по умолчанию; другие языки включаются в **Нагрузка → Движки нагрузки**. [Исходники, подготовка и условия сравнения](workers/README.md).
 
 Новый эксперимент создаётся по шагам. Прогресс и журнал доступны в «Выполнении». В «Отчётах» находятся история запусков и импорт `report.json`. [Как читать результаты](docs/reading-results.md).
 
@@ -12,7 +12,7 @@
 
 Там же доступен **Linux-сервер**: управление с ПК по SSH, генератор и временные базы на сервере, получение отчёта и повторное подключение после потери связи. [Подготовка сервера и запуск](docs/remote-server.md), [пример настроек](configs/remote-server.json).
 
-В разделе **Нагрузка → Что тестируем → Свои таблицы и SQL-запросы** есть редактор собственных структур, генераторов и CSV/JSONL-данных, запросов, транзакций и проверок. Первая версия поддерживает C# с PostgreSQL, MySQL, MariaDB, SQLite и SQL Server во всех трёх окружениях. Сценарии можно переносить пакетами `.bfworkload`, а действия смеси выгружать в `operations.csv`. [Руководство и параметры](docs/custom-workloads.md), [примеры](configs/workloads/).
+В разделе **Нагрузка → Что тестируем → Свои таблицы и SQL-запросы** есть редактор собственных структур, генераторов и CSV/JSONL-данных, запросов, транзакций и проверок. Первая версия поддерживает C# с PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, DuckDB, Oracle и CockroachDB во всех трёх окружениях. Сценарии можно переносить пакетами `.bfworkload`, а действия смеси выгружать в `operations.csv`. [Руководство и параметры](docs/custom-workloads.md), [примеры](configs/workloads/).
 
 ## Запуск
 
@@ -67,13 +67,19 @@ dotnet run --project src/BenchForge.Cli -c Release -- --config configs/all-datab
 | Valkey | Отдельный сервер с тем же профилем ключей; не объединяется с Redis в одну строку |
 | ClickHouse | MergeTree, диапазоны, агрегация, аналитическое сканирование и пакетные вставки через HTTP / JSONEachRow |
 | SQL Server | Те же OLTP-тесты через C#; Microsoft.Data.SqlClient, SqlBulkCopy; [условия и запуск](docs/sql-server.md) |
+| DuckDB | Встраиваемая аналитика через C#, appender, OLAP и стандартные SQL-тесты |
+| Oracle Free | OLTP через C#, ODP.NET, array binding, отдельная схема DBLAB |
+| CockroachDB | SQL через C#, один узел без репликации, Npgsql |
+| Elasticsearch / OpenSearch | HTTP, документы, bulk, агрегаты и отдельный полнотекстовый поиск |
 | SQLite | Встраиваемая база, WAL и `synchronous=FULL`; нет сети и отдельного серверного процесса |
 
-Пакетные транспорты различаются и фиксируются в отчёте: SQL Server (C#) — SqlBulkCopy; PostgreSQL — binary COPY; MySQL/MariaDB — параметризованный multi-row INSERT; MongoDB — InsertMany; Redis/Valkey — конвейер HSET; SQLite — подготовленный INSERT внутри транзакции; ClickHouse — HTTP / JSONEachRow. Для Redis пакет не является атомарной транзакцией.
+Пакетные транспорты различаются и фиксируются в отчёте: DuckDB — appender в транзакции; Oracle — array binding в транзакции; CockroachDB — multi-row INSERT; Elasticsearch/OpenSearch — NDJSON bulk с проверкой каждого документа; SQL Server (C#) — SqlBulkCopy; PostgreSQL — binary COPY; MySQL/MariaDB — параметризованный multi-row INSERT; MongoDB — InsertMany; Redis/Valkey — конвейер HSET; SQLite — подготовленный INSERT внутри транзакции; ClickHouse — HTTP / JSONEachRow. Для Redis пакет не является атомарной транзакцией.
 
 SQLite измеряет всю связку приложения, драйвера, движка SQLite, кеша и файловой системы. Отсутствие сети не делает результат «чистым временем диска».
 
 В Redis/Valkey отключены AOF/RDB; это профиль кеша, его задержки записи не означают те же гарантии сохранности, что у SQL. ClickHouse тестируется как аналитическое хранилище: универсального рейтинга победителей между этими категориями приложение не назначает.
+
+Профили и ограничения новых баз описаны в [руководстве](docs/additional-databases.md). Всего доступно 14 СУБД.
 
 ## Что измеряется
 

@@ -83,7 +83,7 @@ public sealed class DataAndMetricsTests
     }
     [Fact] public void CapabilitiesDistinguishDatabaseFamiliesAndNativeEngines()
     {
-        Assert.Equal(9, Catalog.Targets.Length); Assert.Equal(6, Engines.All.Length);
+        Assert.Equal(14, Catalog.Targets.Length); Assert.Equal(6, Engines.All.Length);
         Assert.All(Engines.All, e => Assert.Equal("implemented", e.Status));
         Assert.DoesNotContain(Scenario.Aggregate, Catalog.Get(TargetKind.Redis).Scenarios);
         Assert.DoesNotContain(Scenario.Update, Catalog.Get(TargetKind.ClickHouse).Scenarios);

@@ -31,7 +31,8 @@ public static class ReportAnalysis
         nameof(Scenario.PointRead) => "Каждый запрос находит одну запись по её ID и получает все поля. Скорость показывает число успешных чтений за секунду.",
         nameof(Scenario.RangeRead) => "Один запрос получает до 100 записей по порядку ID. Одна операция здесь возвращает больше данных, чем чтение по ID.",
         nameof(Scenario.Aggregate) => "Запрос считает записи и сумму значения в одной группе. Результат относится к этому виду агрегации.",
-        nameof(Scenario.AnalyticalScan) => "Аналитический запрос считает и суммирует значения в диапазоне ключей. Это профиль ClickHouse.",
+        nameof(Scenario.AnalyticalScan) => "Аналитический запрос считает и суммирует значения в диапазоне ключей. Аналитический профиль ClickHouse и DuckDB.",
+        nameof(Scenario.FullTextSearch) => "Поиск по текстовому индексу: запрос 16-символьного термина исходного текста, до 10 найденных документов. Термин проверяется в ответах. Это профиль Elasticsearch/OpenSearch.",
         nameof(Scenario.Update) => "Каждая операция атомарно увеличивает счётчик версии одной записи.",
         nameof(Scenario.Mixed) => "В среднем 80% операций читают запись, 20% обновляют её. Показана скорость всей смеси.",
         nameof(Scenario.Insert) => "Одна операция вставляет новую запись и ждёт подтверждения выбранной СУБД.",
@@ -95,7 +96,7 @@ public static class ReportAnalysis
     }
     public static string Count(long value) => value.ToString("N0", Russian);
     internal static bool Supported(TargetKind target, string phase) => phase.StartsWith("custom/", StringComparison.Ordinal) && SqlWorkload.Supports(target) || phase == "bulk_load" || phase == "index_build"
-        && target is not (TargetKind.Redis or TargetKind.Valkey or TargetKind.ClickHouse)
+        && target is not (TargetKind.Redis or TargetKind.Valkey or TargetKind.ClickHouse or TargetKind.Elasticsearch or TargetKind.OpenSearch or TargetKind.DuckDb)
         || Enum.TryParse<Scenario>(phase, out var scenario) && Catalog.Get(target).Scenarios.Contains(scenario);
 
     public static SeriesAnalysis[] Compare(BenchmarkReport report, IReadOnlyList<PhaseResult> results, ReportSlice slice, AnalysisMetric metric)
@@ -118,7 +119,7 @@ public static class ReportAnalysis
                     : all.Length == 0 ? report.Status == "running" ? "Ещё не измерено" : "Нет результата для этих условий"
                     : all.All(r => r.Cancelled) ? "Прогон остановлен"
                     : considered.Length == 0 ? "Нет корректного прогона без ошибок"
-                    : (metric is AnalysisMetric.ServerMemory or AnalysisMetric.ServerCpu) && target == TargetKind.Sqlite ? "SQLite работает внутри генератора"
+                    : (metric is AnalysisMetric.ServerMemory or AnalysisMetric.ServerCpu) && Catalog.Embedded(target) ? "Встраиваемая база работает внутри генератора"
                     : metric is AnalysisMetric.ServerMemory or AnalysisMetric.ServerCpu ? "Нет выборок ресурсов за этот этап"
                     : SetupPhase(slice.Phase) ? "Не измеряется на этапе подготовки" : "Показатель не был сохранён";
             var name = slice.Target is not null && engines.Length > 1 ? Engines.Name(engine) : Catalog.Get(target).Name + (engines.Length > 1 ? " · " + Engines.Name(engine) : "");

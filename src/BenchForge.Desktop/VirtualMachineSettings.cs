@@ -47,7 +47,7 @@ internal sealed class VirtualMachineSettings : UserControl
                 fields.IsEnabled = false;
                 _mode.IsEnabled = false;
                 await new VirtualMachineTemplate().PrepareAsync(options,
-                    Catalog.Targets.Where(target => target.Kind != TargetKind.Sqlite).Select(target => target.Image),
+                    Catalog.Targets.Where(target => !Catalog.Embedded(target.Kind)).Select(target => target.Image),
                     message => Dispatcher.UIThread.Post(() => _status.Text = message), stop.Token);
             }
             catch (OperationCanceledException) { _status.Text = "Подготовка остановлена."; }

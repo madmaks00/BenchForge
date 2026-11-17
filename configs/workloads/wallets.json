@@ -13,7 +13,7 @@
     ] },
     { "id": "transfer", "name": "Перевод между счетами", "weight": 20, "readOnly": false, "transaction": true, "steps": [
       { "command": { "sql": "UPDATE wallets SET balance=balance-1 WHERE id=@key" }, "result": "nonQuery", "minRows": 1, "maxRows": 1 },
-      { "command": { "sql": "UPDATE wallets SET balance=balance+1 WHERE id=(@key % @baseRows)+1" }, "result": "nonQuery", "minRows": 1, "maxRows": 1 }
+      { "command": { "sql": "UPDATE wallets SET balance=balance+1 WHERE id=(@key % @baseRows)+1", "overrides": { "oracle": "UPDATE wallets SET balance=balance+1 WHERE id=MOD(@key,@baseRows)+1" } }, "result": "nonQuery", "minRows": 1, "maxRows": 1 }
     ] }
   ],
   "checks": [{ "name": "Сумма денег сохранилась", "command": { "sql": "SELECT SUM(balance)-COUNT(*)*10000 FROM wallets" }, "expected": "0" }]

@@ -27,14 +27,17 @@ public sealed class CustomSqlDatabase(RunCase run) : IDatabase
     {
         await SqlConnections.EnsureDatabaseAsync(run, token);
         _admin = SqlConnections.Create(run.Target, _connectionString);
-        try { await _admin.OpenAsync(token); await SqlConnections.ConfigureAsync(_admin, run.Target, true, token); }
+        try { await _admin.OpenAsync(token); await SqlConnections.ConfigureAsync(_admin, run.Target, true, token, run.Config); }
         catch { await _admin.DisposeAsync(); _admin = null; throw; }
     }
     private async Task ExecAsync(string sql, CancellationToken token)
     {
         if (string.IsNullOrWhiteSpace(sql)) return;
-        await using var command = _admin!.CreateCommand(); command.CommandText = sql; command.CommandTimeout = 600;
-        await command.ExecuteNonQueryAsync(token);
+        foreach (var statement in SqlScripts.Statements(sql, run.Target))
+        {
+            await using var command = _admin!.CreateCommand(); SqlConnections.SetText(command, statement); command.CommandTimeout = 600;
+            await command.ExecuteNonQueryAsync(token);
+        }
     }
     public async Task ResetAsync(CancellationToken token)
     {
@@ -60,9 +63,10 @@ public sealed class CustomSqlDatabase(RunCase run) : IDatabase
             var reservoirs = _workload.ActiveOperations.SelectMany(operation => operation.Parameters).Where(value => value.Generator == ValueGenerator.Sample && value.Reference == table.Name)
                 .DistinctBy(WorkloadData.SampleKey).Select(value => new SampleReservoir(value, run.Config.Seed)).ToArray();
             await using var command = _admin!.CreateCommand(); command.CommandTimeout = 600;
-            command.CommandText = "INSERT INTO " + SqlWorkloadText.Quote(table.Name, run.Target) + " (" + string.Join(',', table.Columns.Select(column => SqlWorkloadText.Quote(column.Name, run.Target))) +
-                ") VALUES (" + string.Join(',', table.Columns.Select(column => "@" + column.Name)) + ")";
-            foreach (var column in table.Columns) { var parameter = AddParameter(command, column.Name, column.Type); if (column.Type == SqlValueType.Guid && run.Target is not (TargetKind.PostgreSql or TargetKind.SqlServer)) parameter.DbType = DbType.String; }
+            SqlConnections.SetText(command, "INSERT INTO " + SqlWorkloadText.Quote(table.Name, run.Target) + " (" + string.Join(',', table.Columns.Select(column => SqlWorkloadText.Quote(column.Name, run.Target))) +
+                ") VALUES (" + string.Join(',', table.Columns.Select(column => "@" + column.Name)) + ")");
+            foreach (var column in table.Columns) { var parameter = AddParameter(command, column.Name, column.Type); if (column.Type == SqlValueType.Guid && run.Target is not (TargetKind.PostgreSql or TargetKind.SqlServer or TargetKind.DuckDb or TargetKind.Oracle or TargetKind.CockroachDb)) parameter.DbType = DbType.String;
+                if (parameter is Oracle.ManagedDataAccess.Client.OracleParameter oracle && column.Type == SqlValueType.Text && !column.PrimaryKey && !column.Unique) oracle.OracleDbType = Oracle.ManagedDataAccess.Client.OracleDbType.Clob; }
             await command.PrepareAsync(token);
             IEnumerator<Dictionary<string, object?>>? imported = null;
             if (table.Import is { } import)
@@ -90,7 +94,7 @@ public sealed class CustomSqlDatabase(RunCase run) : IDatabase
                         else if (!imported.Current.TryGetValue(column.Name, out var cell)) value = column.Nullable ? DBNull.Value : throw new InvalidDataException("В файле нет поля " + column.Name);
                         else value = WorkloadData.ConvertValue(cell is string { Length: 0 } && column.Nullable ? null : cell, column.Type);
                         if (value is DBNull && !column.Nullable) throw new InvalidDataException("NULL в обязательном поле " + column.Name);
-                        command.Parameters[columnIndex].Value = ProviderValue(value, column.Type, run.Target);
+                        SetValue(command.Parameters[columnIndex], value, column.Type, run.Target);
                         foreach (var reservoir in reservoirs) if (reservoir.Definition.SampleColumn == column.Name && value is not DBNull) reservoir.Add(value);
                     }
                     await command.ExecuteNonQueryAsync(token); loaded++;
@@ -122,12 +126,12 @@ public sealed class CustomSqlDatabase(RunCase run) : IDatabase
     {
         foreach (var check in _workload.Checks.Where(check => before ? check.Before : check.After))
         {
-            await using var command = _admin!.CreateCommand(); command.CommandText = check.Command.For(run.Target); command.CommandTimeout = _workload.CommandTimeoutSeconds;
-            foreach (var name in SqlWorkloadText.Parameters(command.CommandText))
-            { var parameter = command.CreateParameter(); parameter.ParameterName = "@" + name; parameter.Value = Builtin(name, 0, 0, 0); command.Parameters.Add(parameter); }
+            await using var command = _admin!.CreateCommand(); SqlConnections.SetText(command, check.Command.For(run.Target)); command.CommandTimeout = _workload.CommandTimeoutSeconds;
+            foreach (var name in SqlWorkloadText.Parameters(check.Command.For(run.Target)))
+            { var parameter = AddParameter(command, name, SqlValueType.Int64); parameter.Value = Builtin(name, 0, 0, 0); }
             var value = await command.ExecuteScalarAsync(token);
             if (value is null or DBNull) throw new InvalidDataException("Проверка вернула NULL: " + check.Name);
-            var actual = Convert.ToDecimal(value, CultureInfo.InvariantCulture);
+            var actual = SqlScalars.Decimal(value);
             var expected = check.Expected == "baseRows" ? run.Rows : check.Expected.StartsWith("rows:", StringComparison.Ordinal) && TableRows.TryGetValue(check.Expected[5..], out var rows) ? rows : decimal.Parse(check.Expected, CultureInfo.InvariantCulture);
             if (!(check.Comparison switch { CheckComparison.Equal => actual == expected, CheckComparison.AtLeast => actual >= expected, _ => actual <= expected }))
                 throw new InvalidDataException($"{check.Name}: получено {actual}, ожидалось {check.Comparison} {expected}.");
@@ -147,6 +151,9 @@ public sealed class CustomSqlDatabase(RunCase run) : IDatabase
         await using var command = _admin!.CreateCommand(); command.CommandText = SqlConnections.VersionQuery(run.Target);
         return new("csharp", RuntimeInformation.FrameworkDescription, DriverIdentity.Of(_admin.GetType()), Convert.ToString(await command.ExecuteScalarAsync(token))!,
             new() { ["workload_name"] = _workload.Name, ["workload_sha256"] = _workload.Fingerprint, ["workload_mode"] = _workload.Mode.ToString(),
+                ["sql_dialect"] = run.Target.ToString(), ["transaction_retries"] = "none; retryable conflicts are counted as errors",
+                ["execution_profile"] = run.Target switch { TargetKind.DuckDb => $"embedded OLAP; memory budget {run.Config.MemoryMb} MB; {(int)Math.Ceiling(run.Config.CpuLimit)} query threads; worker overhead not capped",
+                    TargetKind.CockroachDb => "single node; replication disabled; default SERIALIZABLE", TargetKind.Oracle => "Oracle Free edition limits; own DBLAB schema in FREEPDB1", _ => "single instance SQL profile" },
                 ["connections"] = "one dedicated SQL connection per logical client; pooling=false", ["prepared_queries"] = _workload.PrepareCommands.ToString(),
                 ["batch_transport"] = "parameterized row INSERT inside batch transaction; same approach for custom SQL targets", ["generator"] = "custom-splitmix64-v1",
                 ["workload_reset"] = _workload.ResetBetweenOperations ? "declared tables reloaded between separate operations and mix; stages share state" : "state shared between operations and stages",
@@ -160,7 +167,7 @@ public sealed class CustomSqlDatabase(RunCase run) : IDatabase
         var connection = SqlConnections.Create(run.Target, _connectionString);
         try
         {
-            await connection.OpenAsync(token); await SqlConnections.ConfigureAsync(connection, run.Target, false, token);
+            await connection.OpenAsync(token); await SqlConnections.ConfigureAsync(connection, run.Target, false, token, run.Config);
             var session = new CustomSqlSession(this, run, connection, Interlocked.Increment(ref _clients));
             await session.PrepareAsync(token); return session;
         }
@@ -182,18 +189,35 @@ public sealed class CustomSqlDatabase(RunCase run) : IDatabase
     }
     internal static DbParameter AddParameter(DbCommand command, string name, SqlValueType type)
     {
-        var parameter = command.CreateParameter(); parameter.ParameterName = "@" + name; parameter.Value = DBNull.Value;
+        var parameter = command.CreateParameter(); parameter.ParameterName = SqlConnections.ParameterName(command, name); parameter.Value = DBNull.Value;
         parameter.DbType = type switch { SqlValueType.Int64 => DbType.Int64, SqlValueType.Int32 => DbType.Int32, SqlValueType.Decimal => DbType.Decimal, SqlValueType.Double => DbType.Double,
-            SqlValueType.Boolean => DbType.Boolean, SqlValueType.DateTime => DbType.DateTime, SqlValueType.Guid => DbType.Guid, _ => DbType.String };
+            SqlValueType.Boolean => DbType.Boolean, SqlValueType.DateTime => DbType.DateTime, SqlValueType.Guid => parameter is Oracle.ManagedDataAccess.Client.OracleParameter ? DbType.Binary : DbType.Guid, _ => DbType.String };
         if (parameter is Microsoft.Data.SqlClient.SqlParameter)
         {
             if (type == SqlValueType.Text) parameter.Size = -1;
             if (type == SqlValueType.Decimal) { parameter.Precision = 28; parameter.Scale = 12; }
             if (type == SqlValueType.DateTime) { parameter.DbType = DbType.DateTime2; parameter.Size = 8; parameter.Scale = 6; }
         }
+        if (parameter is Oracle.ManagedDataAccess.Client.OracleParameter oracle)
+        {
+            if (type == SqlValueType.Guid) { oracle.OracleDbType = Oracle.ManagedDataAccess.Client.OracleDbType.Raw; oracle.Size = 16; }
+            if (type == SqlValueType.Text) { oracle.OracleDbType = Oracle.ManagedDataAccess.Client.OracleDbType.NVarchar2; oracle.Size = 0; }
+            if (type == SqlValueType.DateTime) oracle.OracleDbType = Oracle.ManagedDataAccess.Client.OracleDbType.TimeStamp;
+            if (type == SqlValueType.Decimal) { oracle.Precision = 28; oracle.Scale = 12; }
+        }
         command.Parameters.Add(parameter); return parameter;
     }
-    internal static object ProviderValue(object value, SqlValueType type, TargetKind target) => value is not DBNull && type == SqlValueType.Guid && target is not (TargetKind.PostgreSql or TargetKind.SqlServer) ? value.ToString()! : value;
+    internal static void SetValue(DbParameter parameter, object value, SqlValueType type, TargetKind target)
+    {
+        parameter.Value = ProviderValue(value, type, target);
+        if (parameter is Oracle.ManagedDataAccess.Client.OracleParameter oracle && type == SqlValueType.Text)
+        {
+            var length = value is string text ? text.Length : 0;
+            if (length > 2000) oracle.OracleDbType = Oracle.ManagedDataAccess.Client.OracleDbType.Clob;
+            oracle.Size = length;
+        }
+    }
+    internal static object ProviderValue(object value, SqlValueType type, TargetKind target) => value is Guid guid && target == TargetKind.Oracle ? guid.ToByteArray() : value is not DBNull && type == SqlValueType.Guid && target is not (TargetKind.PostgreSql or TargetKind.SqlServer or TargetKind.DuckDb or TargetKind.CockroachDb) ? value.ToString()! : value;
     public async ValueTask DisposeAsync() { if (_admin is not null) await _admin.DisposeAsync(); }
 }
 
@@ -222,10 +246,10 @@ internal sealed class CustomSqlSession(CustomSqlDatabase database, RunCase run, 
             var commands = new List<(SqlStep, DbCommand)>(); _commands.Add(operation.Id, commands);
             foreach (var step in operation.Steps)
             {
-                var command = connection.CreateCommand(); command.CommandText = step.Command.For(run.Target); command.CommandTimeout = _workload.CommandTimeoutSeconds;
+                var command = connection.CreateCommand(); SqlConnections.SetText(command, step.Command.For(run.Target)); command.CommandTimeout = _workload.CommandTimeoutSeconds;
                 commands.Add((step, command));
-                foreach (var name in SqlWorkloadText.Parameters(command.CommandText))
-                { var type = parameters.GetValueOrDefault(name, SqlValueType.Int64); var parameter = CustomSqlDatabase.AddParameter(command, name, type); if (type == SqlValueType.Guid && run.Target is not (TargetKind.PostgreSql or TargetKind.SqlServer)) parameter.DbType = DbType.String; }
+                foreach (var name in SqlWorkloadText.Parameters(step.Command.For(run.Target)))
+                { var type = parameters.GetValueOrDefault(name, SqlValueType.Int64); var parameter = CustomSqlDatabase.AddParameter(command, name, type); if (type == SqlValueType.Guid && run.Target is not (TargetKind.PostgreSql or TargetKind.SqlServer or TargetKind.DuckDb or TargetKind.Oracle or TargetKind.CockroachDb)) parameter.DbType = DbType.String; }
                 if (_workload.PrepareCommands) await command.PrepareAsync(token);
             }
         }
@@ -250,9 +274,9 @@ internal sealed class CustomSqlSession(CustomSqlDatabase database, RunCase run, 
                 command.Transaction = transaction;
                 foreach (DbParameter parameter in command.Parameters)
                 {
-                    var name = parameter.ParameterName[1..];
+                    var name = parameter.ParameterName.TrimStart('@', ':', '$');
                     var value = values.TryGetValue(name, out var generated) ? generated : database.Builtin(name, sequence, client, key);
-                    parameter.Value = CustomSqlDatabase.ProviderValue(value, _types[operation.Id].GetValueOrDefault(name, SqlValueType.Int64), run.Target);
+                    CustomSqlDatabase.SetValue(parameter, value, _types[operation.Id].GetValueOrDefault(name, SqlValueType.Int64), run.Target);
                 }
                 long count;
                 if (step.Result == SqlResultMode.NonQuery) count = await command.ExecuteNonQueryAsync(token);

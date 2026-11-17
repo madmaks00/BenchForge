@@ -46,7 +46,7 @@ public sealed class ExperimentSetupView : UserControl
             if (_fields.TryGetValue("payload", out var payload)) payload.IsEnabled = !active;
             if (active) { _engines.Apply(["csharp"]); _selected.RemoveWhere(target => !SqlWorkload.Supports(target)); if (_selected.Count == 0) _selected.Add(TargetKind.Sqlite); }
             foreach (var (target, controls) in _databases) { controls.Button.IsEnabled = !active || SqlWorkload.Supports(target); PaintDatabase(target); }
-            _engines.SetSqlServerMode(_selected.Contains(TargetKind.SqlServer));
+            _engines.SetRestrictedMode(_selected.Any(Catalog.CSharpOnly));
             _selection.Text = "Выбрано: " + _selected.Count;
         };
         var root = new Grid { RowDefinitions = new RowDefinitions { new(GridLength.Auto), _pageRow, new(GridLength.Auto), new(GridLength.Auto) } };
@@ -77,7 +77,8 @@ public sealed class ExperimentSetupView : UserControl
     }
     private Control BuildDatabases()
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,*"), RowDefinitions = new RowDefinitions(string.Join(",8,", Enumerable.Repeat("Auto", (Catalog.Targets.Length + 1) / 2))) };
+        const int columns = 3;
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,*,12,*"), RowDefinitions = new RowDefinitions(string.Join(",8,", Enumerable.Repeat("Auto", (Catalog.Targets.Length + columns - 1) / columns))) };
         for (var i = 0; i < Catalog.Targets.Length; i++)
         {
             var target = Catalog.Targets[i];
@@ -106,16 +107,19 @@ public sealed class ExperimentSetupView : UserControl
             {
                 if (!_selected.Remove(target.Kind)) _selected.Add(target.Kind);
                 PaintDatabase(target.Kind);
-                _engines.SetSqlServerMode(_selected.Contains(TargetKind.SqlServer));
+                _engines.SetRestrictedMode(_selected.Any(Catalog.CSharpOnly));
+                var minimumMemory = _selected.Select(Catalog.MinimumMemoryMb).DefaultIfEmpty(512).Max();
+                if (_fields.TryGetValue("memory", out var memory) && int.TryParse(memory.Text, out var currentMemory) && currentMemory < minimumMemory)
+                    memory.Text = minimumMemory.ToString(CultureInfo.InvariantCulture);
                 _selection.Text = "Выбрано: " + _selected.Count;
                 _error.IsVisible = false;
             };
-            Grid.SetColumn(button, i % 2 * 2);
-            Grid.SetRow(button, i / 2 * 2);
+            Grid.SetColumn(button, i % columns * 2);
+            Grid.SetRow(button, i / columns * 2);
             grid.Children.Add(button);
         }
         return Ui.Scroll(Ui.Stack(14, Ui.Label("Выберите базы для тестирования", 18, Ui.Text, true), grid,
-            Ui.Label("Серверным базам нужен Docker в режиме Linux-контейнеров. SQL Server: C#, Linux x64, минимум 2 ГБ RAM; Developer для тестирования, принимается EULA Microsoft.", 13)));
+            Ui.Label("SQLite и DuckDB работают без Docker. Серверным базам нужен Docker с Linux-контейнерами на выбранном компьютере или сервере.", 13)));
     }
 
     private void PaintDatabase(TargetKind target)
@@ -179,10 +183,10 @@ public sealed class ExperimentSetupView : UserControl
         };
         var environmentTitle = config.RemoteServer is { } server ? "Linux-сервер · " + server.DisplayName
             : config.VirtualMachine is not null ? "Чистая VM на каждый прогон"
-            : config.Targets.All(t => t == TargetKind.Sqlite) ? "SQLite · локальный файл" : "Docker · отдельные тестовые контейнеры";
+            : config.Targets.All(Catalog.Embedded) ? "Встраиваемые базы · локальные файлы" : "Docker · отдельные тестовые контейнеры";
         var environmentText = config.RemoteServer is not null ? "Генератор и база работают на сервере. ПК получает прогресс и отчёт. Разрыв связи не останавливает запущенное задание."
             : config.VirtualMachine is { } vm ? $"Шаблон {vm.Template}\nМашина: {vm.Cpus} CPU · {vm.MemoryMb:N0} МБ RAM · {vm.DiskGb} ГБ диск"
-            : config.Targets.All(t => t == TargetKind.Sqlite) ? "База работает внутри генератора нагрузки." : $"На каждую серверную базу: {config.CpuLimit:g} CPU, {config.MemoryMb:N0} МБ памяти.";
+            : config.Targets.All(Catalog.Embedded) ? "База работает внутри генератора нагрузки." : $"На каждую серверную базу: {config.CpuLimit:g} CPU, {config.MemoryMb:N0} МБ памяти.";
         var conditions = Ui.Stack(18, Ui.Label("Окружение", 17, Ui.Text, true),
             Ui.Label(environmentTitle, 14, Ui.Text), Ui.Label(environmentText), check, _checkStatus);
         var save = Ui.Button("Сохранить настройки", "quiet", () => SaveRequested?.Invoke(ReadConfig())); save.HorizontalAlignment = HorizontalAlignment.Left;
@@ -207,7 +211,7 @@ public sealed class ExperimentSetupView : UserControl
             if (step == 2) BuildReview();
             _error.IsVisible = false; _step = step;
             for (var i = 0; i < _steps.Length; i++) Ui.Select(_steps[i], i == step);
-            _pageRow.Height = step == 0 ? GridLength.Auto : GridLength.Star;
+            _pageRow.Height = GridLength.Star;
             _back.IsVisible = step > 0;
             var nextAction = step switch { 0 => "К нагрузке", 1 => "К проверке", _ => "Запустить эксперимент" };
             _next.Content = nextAction + " →";
@@ -251,7 +255,7 @@ public sealed class ExperimentSetupView : UserControl
         _environment.ApplyRemote(config.RemoteServer);
         _engines.Apply(config.EngineIds);
         _custom.Apply(config.CustomWorkload, config.WorkloadDirectory);
-        _engines.SetSqlServerMode(_selected.Contains(TargetKind.SqlServer));
+        _engines.SetRestrictedMode(_selected.Any(Catalog.CSharpOnly));
         _hotspot.IsChecked = config.Hotspot;
         _scenario.SelectedIndex = config.Scenarios.Count == 1 ? Array.IndexOf(Enum.GetValues<Scenario>(), config.Scenarios[0]) + 2 : config.Plan is null || config.Scenarios.Count > 1 ? 1 : 0;
         GoTo(_step);

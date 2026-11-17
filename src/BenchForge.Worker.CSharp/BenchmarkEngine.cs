@@ -120,13 +120,13 @@ public sealed partial class BenchmarkEngine(RunCase run, ProtocolWriter writer)
 
     private async Task<IDatabase> OpenReadyAsync(CancellationToken token)
     {
-        var until = DateTimeOffset.UtcNow.AddSeconds(90);
+        var until = DateTimeOffset.UtcNow.AddSeconds(run.Target == TargetKind.Oracle ? 300 : 90);
         while (true)
         {
             token.ThrowIfCancellationRequested();
             var database = DatabaseFactory.Create(run);
             try { await database.InitializeAsync(token); return database; }
-            catch when (run.Target != TargetKind.Sqlite && !token.IsCancellationRequested && DateTimeOffset.UtcNow < until)
+            catch when (!Catalog.Embedded(run.Target) && !token.IsCancellationRequested && DateTimeOffset.UtcNow < until)
             { await database.DisposeAsync(); await Task.Delay(500, token); }
             catch { await database.DisposeAsync(); throw; }
         }
@@ -177,7 +177,7 @@ public sealed partial class BenchmarkEngine(RunCase run, ProtocolWriter writer)
         LoadStageResult? stage, CancellationToken token, bool progress, string? phaseName = null)
     {
         ThreadPool.GetMinThreads(out var workerThreads, out var ioThreads);
-        if (run.Target == TargetKind.Sqlite) ThreadPool.SetMinThreads(Math.Max(workerThreads, Math.Min(252, clients) + 4), ioThreads);
+        if (Catalog.Embedded(run.Target)) ThreadPool.SetMinThreads(Math.Max(workerThreads, Math.Min(252, clients) + 4), ioThreads);
         var counters = Enumerable.Range(0, clients).Select(_ => new Counters()).ToArray();
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

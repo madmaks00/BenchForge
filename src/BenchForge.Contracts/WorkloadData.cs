@@ -47,13 +47,13 @@ public static class WorkloadData
         var text = Convert.ToString(raw, CultureInfo.InvariantCulture)!;
         return type switch
         {
-            SqlValueType.Int64 => Convert.ToInt64(raw, CultureInfo.InvariantCulture),
-            SqlValueType.Int32 => Convert.ToInt32(raw, CultureInfo.InvariantCulture),
-            SqlValueType.Decimal => Convert.ToDecimal(raw, CultureInfo.InvariantCulture),
-            SqlValueType.Double => Convert.ToDouble(raw, CultureInfo.InvariantCulture),
+            SqlValueType.Int64 => raw is System.Numerics.BigInteger bigLong ? checked((long)bigLong) : Convert.ToInt64(raw, CultureInfo.InvariantCulture),
+            SqlValueType.Int32 => raw is System.Numerics.BigInteger bigInt ? checked((int)bigInt) : Convert.ToInt32(raw, CultureInfo.InvariantCulture),
+            SqlValueType.Decimal => raw is System.Numerics.BigInteger bigDecimal ? checked((decimal)bigDecimal) : Convert.ToDecimal(raw, CultureInfo.InvariantCulture),
+            SqlValueType.Double => raw is System.Numerics.BigInteger bigDouble ? (double)bigDouble : Convert.ToDouble(raw, CultureInfo.InvariantCulture),
             SqlValueType.Boolean => text == "1" || text.Equals("true", StringComparison.OrdinalIgnoreCase) ? true : text == "0" || text.Equals("false", StringComparison.OrdinalIgnoreCase) ? false : throw new FormatException("Ожидается true/false или 1/0."),
-            SqlValueType.DateTime => raw is DateTime date ? date.ToUniversalTime() : DateTime.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
-            SqlValueType.Guid => raw is Guid guid ? guid : Guid.Parse(text),
+            SqlValueType.DateTime => raw is DateTime date ? date.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(date, DateTimeKind.Utc) : date.ToUniversalTime() : DateTime.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
+            SqlValueType.Guid => raw is Guid guid ? guid : raw is byte[] { Length: 16 } bytes ? new Guid(bytes) : Guid.Parse(text),
             _ => text
         };
     }

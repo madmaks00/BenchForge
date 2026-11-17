@@ -51,7 +51,7 @@ public static class ComparisonQuality
             Add("dropped_load", "Часть запланированной нагрузки пропущена.",
                 "Смотрите фактическую скорость вместе с долей пропусков и задержкой с ожиданием.");
         if (series.Any(item => !item.Median.HasValue && ReportAnalysis.Supported(item.Target, slice.Phase)
-            && !((metric is AnalysisMetric.ServerMemory or AnalysisMetric.ServerCpu) && item.Target == TargetKind.Sqlite)))
+            && !((metric is AnalysisMetric.ServerMemory or AnalysisMetric.ServerCpu) && Catalog.Embedded(item.Target))))
             Add("missing_series", "Для части выбранных вариантов нет измерений этого показателя.",
                 "Не считайте отсутствующие значения нулём; проверьте измерения и сбор метрик.");
         if (observed.Any(item => item.ValidRepeats < report.Config.Repeats))
@@ -140,16 +140,17 @@ public static class ComparisonQuality
         : report.Environment.GetValueOrDefault("execution_location") == "remote" ? "Linux-сервер · " + report.Environment.GetValueOrDefault("remote_label", "удалённое исполнение")
         : report.Config.VirtualMachine is { } vm
         ? $"Чистая VM · {vm.Cpus} CPU · {ReportAnalysis.Count(vm.MemoryMb)} МБ RAM"
-        : report.Config.Targets.Any(target => target != TargetKind.Sqlite) ? "Этот компьютер · серверные БД в Docker"
-        : "Этот компьютер · SQLite в процессе движка";
+        : report.Config.Targets.Any(target => !Catalog.Embedded(target)) ? "Этот компьютер · серверные БД в Docker"
+        : "Этот компьютер · встраиваемые базы в процессе движка";
 
     private static string Profile(TargetKind target) => target switch
-    { TargetKind.Sqlite => "встроенная БД", TargetKind.Redis or TargetKind.Valkey => "кеш в памяти", TargetKind.ClickHouse => "аналитическая БД", _ => "серверная БД" };
+    { TargetKind.Sqlite => "встроенная БД", TargetKind.DuckDb => "встроенная аналитическая БД",
+        TargetKind.Elasticsearch or TargetKind.OpenSearch => "поисковая БД", TargetKind.CockroachDb => "SQL без репликации (1 узел)", TargetKind.Oracle => "серверная БД в редакции Free", TargetKind.Redis or TargetKind.Valkey => "кеш в памяти", TargetKind.ClickHouse => "аналитическая БД", _ => "серверная БД" };
 
     private static IEnumerable<EngineMetadata> MetadataFor(BenchmarkReport report, IReadOnlyList<PhaseResult> results, SeriesAnalysis item)
     {
         var targets = report.Config.Targets.Concat(results.Select(row => row.Target)).Distinct().ToArray();
-        string Image(TargetKind target) => target == TargetKind.Sqlite ? "embedded" : report.Config.Image(target);
+        string Image(TargetKind target) => Catalog.Embedded(target) ? "embedded" : report.Config.Image(target);
         var image = Image(item.Target);
         if (targets.Count(target => Image(target) == image) != 1) return [];
         return report.Engines.Values.Where(entry => entry.Engine == item.Engine && entry.Settings is not null &&

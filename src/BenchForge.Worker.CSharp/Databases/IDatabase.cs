@@ -24,6 +24,8 @@ public static class DatabaseFactory
     public static IDatabase Create(RunCase run) => run.Target switch
     {
         TargetKind.PostgreSql or TargetKind.MySql or TargetKind.MariaDb or TargetKind.Sqlite or TargetKind.SqlServer => new SqlDatabase(run),
+        TargetKind.DuckDb or TargetKind.Oracle or TargetKind.CockroachDb => new ExtendedSqlDatabase(run),
+        TargetKind.Elasticsearch or TargetKind.OpenSearch => new SearchDatabase(run),
         TargetKind.MongoDb => new MongoDatabase(run),
         TargetKind.Redis or TargetKind.Valkey => new RedisDatabase(run),
         TargetKind.ClickHouse => new ClickHouseDatabase(run),

@@ -16,9 +16,9 @@ public sealed class OwnedTarget(TargetKind target, BenchmarkConfig config, strin
 
     public async Task StartAsync(CancellationToken token)
     {
-        if (target == TargetKind.Sqlite)
+        if (Catalog.Embedded(target))
         {
-            _file = Path.Combine(folder, "scratch-" + caseId + ".sqlite3");
+            _file = Path.Combine(folder, "scratch-" + caseId + (target == TargetKind.DuckDb ? ".duckdb" : ".sqlite3"));
             Endpoint = new("", 0, "", "", "", _file); return;
         }
         var image = config.Image(target); var info = Catalog.Get(target);
@@ -58,6 +58,20 @@ public sealed class OwnedTarget(TargetKind target, BenchmarkConfig config, strin
             case TargetKind.SqlServer:
                 Env("ACCEPT_EULA", "Y"); Env("MSSQL_PID", "Developer"); Env("MSSQL_SA_PASSWORD", password);
                 Env("MSSQL_MEMORY_LIMIT_MB", (config.MemoryMb * 80 / 100).ToString(CultureInfo.InvariantCulture)); break;
+            case TargetKind.Oracle:
+                Env("ORACLE_PWD", password); Env("ORACLE_CHARACTERSET", "AL32UTF8");
+                args.AddRange(["--shm-size", "1g"]); break;
+            case TargetKind.CockroachDb:
+                command.AddRange(["start-single-node", "--insecure", "--listen-addr=:26257", "--advertise-addr=localhost:26257", "--cache=25%", "--max-sql-memory=25%"]); break;
+            case TargetKind.Elasticsearch: case TargetKind.OpenSearch:
+                Env("discovery.type", "single-node");
+                Env("node.store.allow_mmap", "false");
+                var heapMb = Math.Max(256, config.MemoryMb / 2);
+                Env(target == TargetKind.Elasticsearch ? "ES_JAVA_OPTS" : "OPENSEARCH_JAVA_OPTS", $"-Xms{heapMb}m -Xmx{heapMb}m");
+                if (target == TargetKind.Elasticsearch) { Env("xpack.security.enabled", "false"); Env("xpack.ml.enabled", "false"); }
+                else { Env("DISABLE_SECURITY_PLUGIN", "true"); Env("DISABLE_INSTALL_DEMO_CONFIG", "true"); }
+                // Anonymous volumes live only for this case and are removed with its container.
+                args.AddRange(["--ulimit", "nofile=65536:65536", "-v", target == TargetKind.Elasticsearch ? "/usr/share/elasticsearch/data" : "/usr/share/opensearch/data"]); break;
             case TargetKind.MongoDb:
                 Env("MONGO_INITDB_ROOT_USERNAME", "dblab"); Env("MONGO_INITDB_ROOT_PASSWORD", password); break;
             case TargetKind.Redis: case TargetKind.Valkey:
@@ -74,15 +88,22 @@ public sealed class OwnedTarget(TargetKind target, BenchmarkConfig config, strin
         await ProcessUtil.RunAsync(_docker, args, token, 60, environment);
         var binding = await ProcessUtil.RunAsync(_docker, ["port", _container, info.Port + "/tcp"], token);
         var port = int.Parse(binding.Split('\n')[0].Trim().Split(':')[^1], CultureInfo.InvariantCulture);
-        Endpoint = new("127.0.0.1", port, target == TargetKind.SqlServer ? "sa" : "dblab", password, "dblab");
+        Endpoint = new("127.0.0.1", port, target switch { TargetKind.SqlServer => "sa", TargetKind.CockroachDb => "root", _ => "dblab" },
+            password, target == TargetKind.Oracle ? "FREEPDB1" : "dblab");
         ImageId = await ProcessUtil.RunAsync(_docker, ["inspect", "--format", "{{.Image}}", _container], token);
         log("Ожидание готовности " + info.Name);
-        var deadline = DateTimeOffset.UtcNow.AddMinutes(4);
+        var readyMinutes = target == TargetKind.Oracle ? 10 : 4;
+        var deadline = DateTimeOffset.UtcNow.AddMinutes(readyMinutes);
         while (DateTimeOffset.UtcNow < deadline)
         {
             token.ThrowIfCancellationRequested();
             try
             {
+                if (target == TargetKind.Oracle)
+                {
+                    var health = await ProcessUtil.RunAsync(_docker, ["inspect", "--format", "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}", _container], token);
+                    if (health is not ("healthy" or "none")) { await Task.Delay(1000, token); continue; }
+                }
                 using var socket = new TcpClient();
                 await socket.ConnectAsync(Endpoint.Host, Endpoint.Port, token).AsTask().WaitAsync(TimeSpan.FromSeconds(2), token);
                 return;
@@ -94,7 +115,7 @@ public sealed class OwnedTarget(TargetKind target, BenchmarkConfig config, strin
                 await Task.Delay(500, token);
             }
         }
-        throw new TimeoutException(info.Name + " не стала доступна за 4 минуты.");
+        throw new TimeoutException(info.Name + $" не стала доступна за {readyMinutes} минут.");
     }
     public async ValueTask DisposeAsync()
     {
@@ -111,7 +132,7 @@ public sealed class OwnedTarget(TargetKind target, BenchmarkConfig config, strin
             var root = Path.GetFullPath(folder) + Path.DirectorySeparatorChar;
             if (!Path.GetFullPath(_file).StartsWith(root, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
                 throw new InvalidOperationException("Путь временной базы вышел за папку отчёта.");
-            foreach (var suffix in new[] { "", "-wal", "-shm" }) File.Delete(_file + suffix);
+            foreach (var suffix in new[] { "", "-wal", "-shm", ".wal" }) File.Delete(_file + suffix);
         }
     }
 }

@@ -28,7 +28,7 @@ public static class WorkloadTemplates
                 Steps = [Read("SELECT id,email,name FROM customers WHERE id=@customer_id", 1, 1)] },
             new() { Id = "history", Name = "История заказов с товарами", Weight = 40, Parameters = [Ref("customer_id", "customers")],
                 Steps = [Read("SELECT o.id,o.status,p.title,i.quantity FROM orders o JOIN order_items i ON i.order_id=o.id JOIN products p ON p.id=i.product_id WHERE o.customer_id=@customer_id ORDER BY o.id LIMIT 50", 0, 50) with { Command = new() { Sql = "SELECT o.id,o.status,p.title,i.quantity FROM orders o JOIN order_items i ON i.order_id=o.id JOIN products p ON p.id=i.product_id WHERE o.customer_id=@customer_id ORDER BY o.id LIMIT 50",
-                    Overrides = new() { [TargetKind.SqlServer] = "SELECT TOP (50) o.id,o.status,p.title,i.quantity FROM orders o JOIN order_items i ON i.order_id=o.id JOIN products p ON p.id=i.product_id WHERE o.customer_id=@customer_id ORDER BY o.id" } } }] },
+                    Overrides = new() { [TargetKind.SqlServer] = "SELECT TOP (50) o.id,o.status,p.title,i.quantity FROM orders o JOIN order_items i ON i.order_id=o.id JOIN products p ON p.id=i.product_id WHERE o.customer_id=@customer_id ORDER BY o.id", [TargetKind.Oracle] = "SELECT o.id,o.status,p.title,i.quantity FROM orders o JOIN order_items i ON i.order_id=o.id JOIN products p ON p.id=i.product_id WHERE o.customer_id=@customer_id ORDER BY o.id FETCH FIRST 50 ROWS ONLY" } } }] },
             new() { Id = "checkout", Name = "Создание заказа", Weight = 10, ReadOnly = false, Transaction = true,
                 Parameters = [Ref("customer_id", "customers"), Ref("product_id", "products")],
                 Steps = [Write("INSERT INTO orders(id,customer_id,status) VALUES(@rows_orders+@sequence,@customer_id,'new')"),
@@ -46,7 +46,7 @@ public static class WorkloadTemplates
         [
             new() { Id = "balance", Name = "Посмотреть баланс", Weight = 80, Steps = [Read("SELECT id,balance FROM wallets WHERE id=@key", 1, 1)] },
             new() { Id = "transfer", Name = "Перевод между счетами", Weight = 20, ReadOnly = false, Transaction = true,
-                Steps = [Write("UPDATE wallets SET balance=balance-1 WHERE id=@key"), Write("UPDATE wallets SET balance=balance+1 WHERE id=(@key % @baseRows)+1")] }
+                Steps = [Write("UPDATE wallets SET balance=balance-1 WHERE id=@key"), Write("UPDATE wallets SET balance=balance+1 WHERE id=(@key % @baseRows)+1") with { Command = new() { Sql = "UPDATE wallets SET balance=balance+1 WHERE id=(@key % @baseRows)+1", Overrides = new() { [TargetKind.Oracle] = "UPDATE wallets SET balance=balance+1 WHERE id=MOD(@key,@baseRows)+1" } } }] }
         ],
         Checks = [new() { Name = "Сумма денег сохранилась", Command = new() { Sql = "SELECT SUM(balance)-COUNT(*)*10000 FROM wallets" } }]
     };

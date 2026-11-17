@@ -382,7 +382,7 @@ public sealed class ReportDashboard : UserControl
         }
         var metrics = Ui.Stack(16, Ui.Columns("*,16,*", Chart(AnalysisMetric.Rate), Chart(AnalysisMetric.P99)),
             new Expander { Header = "Ошибки и память по этапам", Content = Ui.Columns("*,16,*", Chart(AnalysisMetric.ErrorPercent),
-                Chart(_report.Config.Targets.All(target => target == TargetKind.Sqlite) ? AnalysisMetric.ClientMemory : AnalysisMetric.ServerMemory)) });
+                Chart(_report.Config.Targets.All(Catalog.Embedded) ? AnalysisMetric.ClientMemory : AnalysisMetric.ServerMemory)) });
         Control schedule = plan.Stages.Count <= 5 ? stages : new Expander { Header = $"План нагрузки · {plan.Stages.Count} этапов", Content = stages };
         return Ui.Scroll(Ui.Stack(12, Ui.Label(LoadPlan.Name(plan.Profile), 20, Ui.Text, true), schedule, metrics,
             Ui.Label("Номера на графике соответствуют этапам. Для скорости показаны все завершённые измерения, включая перегрузку; p99 рассчитан по успешным операциям.", 12)));
@@ -443,7 +443,7 @@ public sealed class ReportDashboard : UserControl
             + "Результат: " + ReportAnalysis.Number(ReportAnalysis.Rate(r), ReportAnalysis.RateUnit(r.Phase)) + $"; успешных операций: {r.SuccessfulOperations:N0}; ошибок: {r.Errors:N0}; пропусков: {r.Dropped:N0}.\n"
             + "Обычный ответ p50: " + ReportAnalysis.Number(r.ServiceLatency?.P50Ms, "мс") + "; медленный ответ p99: " + ReportAnalysis.Number(r.ServiceLatency?.P99Ms, "мс") + ".\n"
             + "Генератор: RAM " + ReportAnalysis.Number(r.Client?.RssSampledMaxMb, "МБ") + "; CPU " + ReportAnalysis.Number(r.Client?.CpuPercent, "%") + "; GC " + ReportAnalysis.Number(r.Client?.GcPauseMs, "мс") + ".\n"
-            + (r.Target == TargetKind.Sqlite ? "SQLite работает внутри генератора. Отдельных серверных CPU и RAM нет."
+            + (Catalog.Embedded(r.Target) ? "Встраиваемая база работает внутри генератора. Отдельных серверных CPU и RAM нет."
                 : "База: RAM " + ReportAnalysis.Number(r.Server?.MemorySampledMaxMb, "МБ") + "; CPU " + ReportAnalysis.Number(r.Server?.CpuMeanPercent, "%") + "; запись на диск " + ReportAnalysis.Number(r.Server?.WrittenMb, "МБ") + ".");
         if (r.ErrorExamples.Count > 0) text += "\n\n" + string.Join("\n", r.ErrorExamples.Select(e => e.Value + " × " + e.Key)); return text;
     }

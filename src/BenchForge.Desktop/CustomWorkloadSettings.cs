@@ -55,7 +55,7 @@ internal sealed class CustomWorkloadSettings : UserControl
         var use = Ui.Button("Создать по шаблону", "quiet", () => { _workload = template.SelectedIndex switch { 1 => WorkloadTemplates.Wallets(), 2 => WorkloadTemplates.Blank(), _ => WorkloadTemplates.Store() }; _directory = null; Refresh(); });
         var body = Ui.Stack(12, _summary, editor, new WrapPanel { Orientation = Orientation.Horizontal, Children = { load, save } },
             new Expander { Header = "Готовые примеры", Content = Ui.Columns("*,12,*", template, use) },
-            Ui.Label("C# · PostgreSQL, MySQL, MariaDB и SQLite. Свою схему и данные можно использовать на этом ПК, в чистой VM или на Linux-сервере.", 12), _status);
+            Ui.Label("C# · PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, DuckDB, Oracle и CockroachDB. Свои схемы и данные работают локально, в VM и на Linux-сервере.", 12), _status);
         var details = Ui.Card(body, 16); details.IsVisible = false;
         _source.SelectionChanged += (_, _) => { details.IsVisible = Active; ModeChanged?.Invoke(Active); Refresh(); };
         Content = Ui.Stack(12, Ui.Field("Что тестируем", _source), details); Refresh();

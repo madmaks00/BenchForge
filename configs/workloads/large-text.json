@@ -1,0 +1,19 @@
+{
+  "name": "Большие текстовые поля",
+  "description": "Текст по 65536 символов: чтение, длинный входной параметр, передача агрегата между шагами и проверка отсутствия обрезания.",
+  "datasets": [{ "name": "items", "columns": [
+    { "name": "id", "primaryKey": true },
+    { "name": "title", "type": "text", "generator": "text", "length": 65536 }
+  ] }],
+  "operations": [
+    { "id": "read", "name": "Получить весь текст", "weight": 50, "steps": [{ "command": { "sql": "SELECT id,title FROM items WHERE id=@key" }, "minRows": 1, "maxRows": 1 }] },
+    { "id": "parameter", "name": "Передать длинный параметр", "weight": 30,
+      "parameters": [{ "name": "text", "type": "text", "generator": "text", "length": 65536 }],
+      "steps": [{ "command": { "sql": "SELECT LENGTH(@text)", "overrides": { "sqlServer": "SELECT LEN(@text)", "oracle": "SELECT DBMS_LOB.GETLENGTH(@text) FROM dual" } }, "result": "scalar", "expectedScalar": "65536" }] },
+    { "id": "capture", "name": "Передать сумму длин между SQL-шагами", "weight": 20, "steps": [
+      { "command": { "sql": "SELECT SUM(LENGTH(title)) FROM items", "overrides": { "sqlServer": "SELECT SUM(CONVERT(BIGINT,LEN(title))) FROM items", "oracle": "SELECT SUM(DBMS_LOB.GETLENGTH(title)) FROM items" } }, "result": "scalar", "captureAs": "total", "captureType": "int64" },
+      { "command": { "sql": "SELECT CASE WHEN @total=@rows_items*65536 THEN 1 ELSE 0 END", "overrides": { "oracle": "SELECT CASE WHEN @total=@rows_items*65536 THEN 1 ELSE 0 END FROM dual" } }, "result": "scalar", "expectedScalar": "1" }
+    ] }
+  ],
+  "checks": [{ "name": "Ни один текст не обрезан", "command": { "sql": "SELECT COUNT(*) FROM items WHERE LENGTH(title)<>65536", "overrides": { "sqlServer": "SELECT COUNT(*) FROM items WHERE LEN(title)<>65536", "oracle": "SELECT COUNT(*) FROM items WHERE DBMS_LOB.GETLENGTH(title)<>65536" } }, "expected": "0" }]
+}

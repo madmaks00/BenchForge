@@ -60,7 +60,7 @@ try
             ? await ReadConfigAsync(args[configIndex + 1])
             : new BenchmarkConfig { VirtualMachine = new(), Targets = Catalog.Targets.Select(target => target.Kind).ToList() };
         await new VirtualMachineTemplate().PrepareAsync(preparation.VirtualMachine ?? new(),
-            preparation.Targets.Where(target => target != TargetKind.Sqlite).Select(preparation.Image), Console.WriteLine, cancellation.Token);
+            preparation.Targets.Where(target => !Catalog.Embedded(target)).Select(preparation.Image), Console.WriteLine, cancellation.Token);
         return 0;
     }
     BenchmarkConfig config;

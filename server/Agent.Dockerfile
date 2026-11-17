@@ -6,8 +6,9 @@ COPY . .
 RUN mkdir -p /opt/benchforge-toolchains/node \
     && native="$(printf '%s' "$BENCHFORGE_ENGINES" | tr ',' '\n' | grep -v '^csharp$' | paste -sd, -)" \
     && if [ -n "$native" ]; then bash workers/install-linux.sh "$native"; fi
-RUN dotnet publish src/BenchForge.Cli/BenchForge.Cli.csproj -c Release --self-contained false -o /out/agent \
-    && dotnet publish src/BenchForge.Worker.CSharp/BenchForge.Worker.CSharp.csproj -c Release --self-contained false -o /out/agent/worker \
+RUN case "$(uname -m)" in x86_64) rid=linux-x64 ;; aarch64|arm64) rid=linux-arm64 ;; *) exit 1 ;; esac \
+    && dotnet publish src/BenchForge.Cli/BenchForge.Cli.csproj -c Release -r "$rid" --self-contained false -o /out/agent \
+    && dotnet publish src/BenchForge.Worker.CSharp/BenchForge.Worker.CSharp.csproj -c Release -r "$rid" --self-contained false -o /out/agent/worker \
     && mkdir -p workers/dist
 
 FROM docker:29-cli AS dockercli

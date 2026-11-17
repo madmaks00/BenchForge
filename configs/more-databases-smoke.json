@@ -1,0 +1,12 @@
+{
+  "engines": ["csharp"],
+  "targets": ["duckDb", "oracle", "cockroachDb", "elasticsearch", "openSearch"],
+  "datasetRows": [1000],
+  "clients": [1],
+  "repeats": 1,
+  "durationSeconds": 1,
+  "warmupSeconds": 0.2,
+  "batchSize": 100,
+  "cpuLimit": 2,
+  "memoryMb": 2560
+}

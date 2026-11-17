@@ -14,7 +14,7 @@ internal sealed class EngineSettings : UserControl
     private readonly TextBlock _status = Ui.Label("C# выбран по умолчанию. Для остальных языков один раз подготовьте зависимости.", 13);
     private CancellationTokenSource? _preparing;
     private Button? _prepareButton, _checkButton;
-    private bool _remoteMode, _customMode, _sqlServerMode;
+    private bool _remoteMode, _customMode, _restrictedMode;
     public EngineSettings()
     {
         var choices = new WrapPanel { Orientation = Orientation.Horizontal };
@@ -69,12 +69,12 @@ internal sealed class EngineSettings : UserControl
     public void SetCustomMode(bool custom)
     {
         _customMode = custom;
-        foreach (var (id, choice) in _choices) choice.IsEnabled = !(_customMode || _sqlServerMode) || id == "csharp";
+        foreach (var (id, choice) in _choices) choice.IsEnabled = !(_customMode || _restrictedMode) || id == "csharp";
         if (custom) Apply(["csharp"]); UpdateMode();
     }
-    public void SetSqlServerMode(bool active)
+    public void SetRestrictedMode(bool active)
     {
-        _sqlServerMode = active;
+        _restrictedMode = active;
         foreach (var (id, choice) in _choices) choice.IsEnabled = !(_customMode || active) || id == "csharp";
         if (active) Apply(["csharp"]); UpdateMode();
     }
@@ -83,7 +83,7 @@ internal sealed class EngineSettings : UserControl
         if (_prepareButton is not null) _prepareButton.IsVisible = !_remoteMode && !_customMode;
         if (_checkButton is not null) _checkButton.IsVisible = !_remoteMode && !_customMode;
         _status.Text = _customMode ? "Свой SQL-сценарий выполняется движком C#. Остальные языки доступны в стандартных тестах."
-            : _sqlServerMode ? "SQL Server пока выполняется движком C#. Чтобы сравнить другие языки, исключите SQL Server из выбранных баз."
+            : _restrictedMode ? "Среди выбранных баз есть доступные пока только в C#: SQL Server, DuckDB, Oracle, CockroachDB или поисковые системы."
             : _remoteMode ? "Выбранные движки подготавливаются на Linux-сервере в разделе «Окружение тестирования». Устанавливать их на этот ПК не требуется."
             : "C# готов после сборки. Остальные движки можно подготовить на этом компьютере.";
     }

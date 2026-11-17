@@ -37,7 +37,7 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
         foreach (var engine in config.EngineIds)
             try { await (workerHost ?? new WorkerProcess()).CheckAsync(engine, token); }
             catch (Exception e) when (e is not OperationCanceledException) { problems.Add(Engines.Name(engine) + ": " + e.Message); }
-        if (config.Targets.Any(t => t != TargetKind.Sqlite))
+        if (config.Targets.Any(t => !Catalog.Embedded(t)))
         {
             try
             {
@@ -147,10 +147,10 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                                 case "metadata":
                                     var metadata = message.Data.Deserialize<EngineMetadata>(Json.Options)!;
                                     if (metadata.Engine != engine) throw new InvalidDataException("Метаданные другого движка.");
-                                    metadata.Settings["image_tag"] = target == TargetKind.Sqlite ? "embedded" : config.Image(target);
+                                    metadata.Settings["image_tag"] = Catalog.Embedded(target) ? "embedded" : config.Image(target);
                                     metadata.Settings["image_id"] = owned.ImageId ?? "embedded";
-                                    metadata.Settings["cpu_limit"] = target == TargetKind.Sqlite ? "not isolated: worker process" : config.CpuLimit.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                                    metadata.Settings["memory_limit_mb"] = target == TargetKind.Sqlite ? "not isolated: worker process" : config.MemoryMb.ToString();
+                                    metadata.Settings["cpu_limit"] = Catalog.Embedded(target) ? "not isolated: worker process" : config.CpuLimit.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                                    metadata.Settings["memory_limit_mb"] = Catalog.Embedded(target) ? "not isolated: worker process" : config.MemoryMb.ToString();
                                     report.Engines.Add(caseId, metadata); break;
                                 case "phase_start":
                                     phaseStart = Stopwatch.GetTimestamp(); phaseEnd = null;
@@ -163,7 +163,7 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                                     var result = message.Data.Deserialize<PhaseResult>(Json.Options)!;
                                     if (result.Engine != engine || result.Target != target || result.DatasetRows != rows || result.Repeat != repeat || !MatchesLoad(result, config.Plan, clients))
                                         throw new InvalidDataException("Движок вернул результаты другого запуска.");
-                                    if (target != TargetKind.Sqlite) result = result with { Server = resources.Summary(phaseStart, phaseEnd ?? Stopwatch.GetTimestamp()) };
+                                    if (!Catalog.Embedded(target)) result = result with { Server = resources.Summary(phaseStart, phaseEnd ?? Stopwatch.GetTimestamp()) };
                                     report.Results.Add(result); await ReportStore.SaveAsync(folder, report);
                                     update?.Invoke(new("result", Result: result, CompletedCases: completed, TotalCases: total)); break;
                                 case "log": Log(message.Data.GetProperty("message").GetString()!); break;

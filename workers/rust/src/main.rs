@@ -1,4 +1,6 @@
 mod adapters;
+mod duckdb;
+mod extended;
 mod portable;
 use adapters::Database;
 use anyhow::{bail, Context, Result};
@@ -19,7 +21,7 @@ use sysinfo::{Pid, ProcessesToUpdate, System};
 
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 static OUTPUT: Mutex<()> = Mutex::new(());
-const SCENARIOS: [&str; 9] = [
+const SCENARIOS: [&str; 10] = [
     "PointRead",
     "RangeRead",
     "Aggregate",
@@ -29,6 +31,7 @@ const SCENARIOS: [&str; 9] = [
     "Insert",
     "BatchInsert",
     "Delete",
+    "FullTextSearch",
 ];
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +59,8 @@ struct Plan {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct Config {
+    memory_mb: u64,
+    cpu_limit: f64,
     duration_seconds: f64,
     warmup_seconds: f64,
     payload_bytes: usize,
@@ -71,6 +76,8 @@ struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            memory_mb: 512,
+            cpu_limit: 2.,
             duration_seconds: 5.,
             warmup_seconds: 2.,
             payload_bytes: 256,
@@ -141,10 +148,20 @@ fn capabilities(target: &str) -> Vec<&'static str> {
             "Delete",
         ],
         "clickHouse" => vec!["RangeRead", "Aggregate", "AnalyticalScan", "BatchInsert"],
-        _ => SCENARIOS
+        "duckDb" => SCENARIOS
+            .iter()
+            .copied()
+            .filter(|s| *s != "FullTextSearch")
+            .collect(),
+        "elasticsearch" | "openSearch" => SCENARIOS
             .iter()
             .copied()
             .filter(|s| *s != "AnalyticalScan")
+            .collect(),
+        _ => SCENARIOS
+            .iter()
+            .copied()
+            .filter(|s| *s != "AnalyticalScan" && *s != "FullTextSearch")
             .collect(),
     }
 }
@@ -530,7 +547,7 @@ fn benchmark(run: Arc<Run>) -> Result<()> {
             )?;
         }
     }
-    let operations = SCENARIOS
+    let mut operations = SCENARIOS
         .iter()
         .copied()
         .filter(|s| {
@@ -542,6 +559,7 @@ fn benchmark(run: Arc<Run>) -> Result<()> {
                 })
         })
         .collect::<Vec<_>>();
+    operations.sort_by_key(|s| *s == "Delete");
     if run.config.warmup_seconds > 0. {
         let count = run
             .config

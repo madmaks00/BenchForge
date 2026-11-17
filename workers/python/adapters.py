@@ -29,6 +29,17 @@ def document(row):
 
 
 class Database:
+    def __new__(cls, run):
+        from extended import TARGETS, SqlDatabase, SearchDatabase
+
+        if run["target"] in TARGETS:
+            return (
+                SearchDatabase
+                if run["target"] in ("elasticsearch", "openSearch")
+                else SqlDatabase
+            )(run)
+        return super().__new__(cls)
+
     def __init__(self, run):
         self.connection = None
         try:

@@ -21,6 +21,7 @@ try{
  foreach($id in $ids){
   Write-Output ('Preparing '+$id+' ...')
   $target=Join-Path $staging $id;New-Item -ItemType Directory -Path $target|Out-Null
+  if($id -in @('node','go','rust')) { $nativePython=Tool 'python' ''; Invoke-Checked $nativePython @((Join-Path $root 'native-libraries.py'),$id,$target,$ToolsDirectory) }
   switch($id){
    'python'{
     $python=Tool 'python' ''
@@ -64,11 +65,16 @@ try{
   Assert-OwnedPath $destination;Assert-OwnedPath $backup;Assert-OwnedPath $target
   if(Test-Path -LiteralPath $destination){Move-Item -LiteralPath $destination -Destination $backup}
   try{Move-Item -LiteralPath $target -Destination $destination}catch{if(Test-Path -LiteralPath $backup){Move-Item -LiteralPath $backup -Destination $destination};throw}
+  $entry.version='native-workers-v2'
   $entries=@($entries|Where-Object {$_.engine -ne $id})+@($entry)
   $json=ConvertTo-Json -InputObject @($entries) -Depth 8
   $temporary=Join-Path $dist 'engines.json.tmp';[IO.File]::WriteAllText($temporary,$json,(New-Object Text.UTF8Encoding($false)))
   Move-Item -LiteralPath $temporary -Destination $manifest -Force
-  if(Test-Path -LiteralPath $backup){Remove-Item -LiteralPath $backup -Recurse -Force}
+  if(Test-Path -LiteralPath $backup){
+   try { Remove-Item -LiteralPath $backup -Recurse -Force }
+   catch [IO.IOException] { Write-Warning ('The new '+$id+' bundle is ready. An older loaded copy remains in '+$backup+'. Close active workers before removing it.') }
+   catch [UnauthorizedAccessException] { Write-Warning ('The new '+$id+' bundle is ready. An older loaded copy remains in '+$backup+'. Close active workers before removing it.') }
+  }
   Write-Output ($id+' ready.')
  }
 }finally{Assert-OwnedPath $staging;if(Test-Path -LiteralPath $staging){Remove-Item -LiteralPath $staging -Recurse -Force}}

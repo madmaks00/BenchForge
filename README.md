@@ -2,7 +2,7 @@
 
 Настольное приложение на C# / .NET 10 / Avalonia с отдельными процессами генераторов нагрузки.
 
-Реализованы **C#, Java, Python, Rust, Node.js / JavaScript и Go**. Каждый движок выполняет нагрузку на своём языке через свои драйверы. SQL Server, DuckDB, Oracle, CockroachDB, Elasticsearch и OpenSearch пока доступны только в C#. C# выбран по умолчанию; другие языки включаются в **Нагрузка → Движки нагрузки**. [Исходники, подготовка и условия сравнения](workers/README.md).
+Все **14 БД** доступны для стандартных тестов с **C#, Java, Python, Rust, Node.js / JavaScript и Go**. Каждый движок выполняет запросы через свой драйвер. Выберите языки в разделе **Нагрузка → Движки нагрузки** и обновите ранее подготовленные движки перед запуском. Свои SQL-сценарии выполняет C#. [Исходники, подготовка и условия сравнения](workers/README.md).
 
 Новый эксперимент создаётся по шагам. Прогресс и журнал доступны в «Выполнении». В «Отчётах» находятся история запусков и импорт `report.json`. [Как читать результаты](docs/reading-results.md).
 
@@ -66,14 +66,14 @@ dotnet run --project src/BenchForge.Cli -c Release -- --config configs/all-datab
 | Redis | Hash на запись; HGETALL, HINCRBY, HSET, DEL, конвейерная запись пакетов; режим кеша в памяти |
 | Valkey | Отдельный сервер с тем же профилем ключей; не объединяется с Redis в одну строку |
 | ClickHouse | MergeTree, диапазоны, агрегация, аналитическое сканирование и пакетные вставки через HTTP / JSONEachRow |
-| SQL Server | Те же OLTP-тесты через C#; Microsoft.Data.SqlClient, SqlBulkCopy; [условия и запуск](docs/sql-server.md) |
-| DuckDB | Встраиваемая аналитика через C#, appender, OLAP и стандартные SQL-тесты |
-| Oracle Free | OLTP через C#, ODP.NET, array binding, отдельная схема DBLAB |
-| CockroachDB | SQL через C#, один узел без репликации, Npgsql |
+| SQL Server | Стандартные OLTP-тесты на Linux x64. [Условия и запуск](docs/sql-server.md) |
+| DuckDB | Встраиваемая аналитика, аналитическое сканирование и стандартные SQL-тесты |
+| Oracle Free | OLTP в отдельной схеме DBLAB |
+| CockroachDB | SQL на одном узле без репликации |
 | Elasticsearch / OpenSearch | HTTP, документы, bulk, агрегаты и отдельный полнотекстовый поиск |
 | SQLite | Встраиваемая база, WAL и `synchronous=FULL`; нет сети и отдельного серверного процесса |
 
-Пакетные транспорты различаются и фиксируются в отчёте: DuckDB — appender в транзакции; Oracle — array binding в транзакции; CockroachDB — multi-row INSERT; Elasticsearch/OpenSearch — NDJSON bulk с проверкой каждого документа; SQL Server (C#) — SqlBulkCopy; PostgreSQL — binary COPY; MySQL/MariaDB — параметризованный multi-row INSERT; MongoDB — InsertMany; Redis/Valkey — конвейер HSET; SQLite — подготовленный INSERT внутри транзакции; ClickHouse — HTTP / JSONEachRow. Для Redis пакет не является атомарной транзакцией.
+Отчёт показывает, как движок записывает пакеты. В C# используются SqlBulkCopy для SQL Server, appender для DuckDB, array binding для Oracle и multi-row INSERT для CockroachDB. В остальных движках для этих четырёх БД выполняются параметризованные вставки в транзакции. Elasticsearch и OpenSearch используют NDJSON bulk с отдельной проверкой каждого документа. Redis и Valkey записывают пакеты через конвейер HSET без общей транзакции.
 
 SQLite измеряет всю связку приложения, драйвера, движка SQLite, кеша и файловой системы. Отсутствие сети не делает результат «чистым временем диска».
 

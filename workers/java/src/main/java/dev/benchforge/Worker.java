@@ -25,7 +25,8 @@ public final class Worker {
           "Mixed",
           "Insert",
           "BatchInsert",
-          "Delete");
+          "Delete",
+          "FullTextSearch");
   static JsonNode run;
 
   static synchronized void emit(String type, Object data) throws IOException {
@@ -52,7 +53,13 @@ public final class Worker {
       case "clickHouse" -> List.of("RangeRead", "Aggregate", "AnalyticalScan", "BatchInsert");
       case "redis", "valkey" ->
           List.of("PointRead", "Update", "Mixed", "Insert", "BatchInsert", "Delete");
-      default -> SCENARIOS.stream().filter(s -> !s.equals("AnalyticalScan")).toList();
+      case "duckDb" -> SCENARIOS.stream().filter(s -> !s.equals("FullTextSearch")).toList();
+      case "elasticsearch", "openSearch" ->
+          SCENARIOS.stream().filter(s -> !s.equals("AnalyticalScan")).toList();
+      default ->
+          SCENARIOS.stream()
+              .filter(s -> !s.equals("AnalyticalScan") && !s.equals("FullTextSearch"))
+              .toList();
     };
   }
 
@@ -466,6 +473,7 @@ public final class Worker {
                           && (requested.isEmpty()
                               ? (!planned || s.equals(supported.getFirst()))
                               : requested.contains(s)))
+              .sorted(Comparator.comparingInt(s -> s.equals("Delete") ? 1 : 0))
               .toList();
       double warmup = config.path("warmupSeconds").asDouble(2);
       if (warmup > 0) {
@@ -584,6 +592,8 @@ public final class Worker {
     TimeZone.setDefault(TimeZone.getTimeZone("Etc/UTC"));
     System.setOut(
         new PrintStream(new FileOutputStream(FileDescriptor.out), true, StandardCharsets.UTF_8));
+    System.setErr(
+        new PrintStream(new FileOutputStream(FileDescriptor.err), true, StandardCharsets.UTF_8));
     if (Arrays.asList(args).contains("--self-test")) {
       System.out.println(JSON.writeValueAsString(vectors()));
       return;

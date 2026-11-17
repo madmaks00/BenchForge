@@ -36,15 +36,14 @@ public static class Catalog
         new(TargetKind.ClickHouse, "ClickHouse", "Аналитика", "clickhouse/clickhouse-server:26.8", 8123,
             [Scenario.RangeRead, Scenario.Aggregate, Scenario.AnalyticalScan, Scenario.BatchInsert]),
         new(TargetKind.Sqlite, "SQLite", "Встраиваемая", "", 0, Oltp),
-        new(TargetKind.SqlServer, "SQL Server", "Реляционная · C#", "mcr.microsoft.com/mssql/server:2025-latest", 1433, Oltp),
-        new(TargetKind.DuckDb, "DuckDB", "Встраиваемая аналитика · C#", "", 0, [..Oltp, Scenario.AnalyticalScan]),
-        new(TargetKind.Oracle, "Oracle Free", "Реляционная · C#", "container-registry.oracle.com/database/free:latest-lite", 1521, Oltp),
-        new(TargetKind.CockroachDb, "CockroachDB", "Распределённая SQL · C#", "cockroachdb/cockroach:v26.2.0", 26257, Oltp),
-        new(TargetKind.Elasticsearch, "Elasticsearch", "Поисковая · C#", "docker.elastic.co/elasticsearch/elasticsearch:9.5.6", 9200, [..Oltp, Scenario.FullTextSearch]),
-        new(TargetKind.OpenSearch, "OpenSearch", "Поисковая · C#", "opensearchproject/opensearch:3.9.0", 9200, [..Oltp, Scenario.FullTextSearch])
+        new(TargetKind.SqlServer, "SQL Server", "Реляционная", "mcr.microsoft.com/mssql/server:2025-latest", 1433, Oltp),
+        new(TargetKind.DuckDb, "DuckDB", "Встраиваемая аналитика", "", 0, [..Oltp, Scenario.AnalyticalScan]),
+        new(TargetKind.Oracle, "Oracle Free", "Реляционная", "container-registry.oracle.com/database/free:latest-lite", 1521, Oltp),
+        new(TargetKind.CockroachDb, "CockroachDB", "Распределённая SQL", "cockroachdb/cockroach:v26.2.0", 26257, Oltp),
+        new(TargetKind.Elasticsearch, "Elasticsearch", "Поисковая", "docker.elastic.co/elasticsearch/elasticsearch:9.5.6", 9200, [..Oltp, Scenario.FullTextSearch]),
+        new(TargetKind.OpenSearch, "OpenSearch", "Поисковая", "opensearchproject/opensearch:3.9.0", 9200, [..Oltp, Scenario.FullTextSearch])
     ];
     public static bool Embedded(TargetKind target) => target is TargetKind.Sqlite or TargetKind.DuckDb;
-    public static bool CSharpOnly(TargetKind target) => target is TargetKind.SqlServer or TargetKind.DuckDb or TargetKind.Oracle or TargetKind.CockroachDb or TargetKind.Elasticsearch or TargetKind.OpenSearch;
     public static bool Search(TargetKind target) => target is TargetKind.Elasticsearch or TargetKind.OpenSearch;
     public static int MinimumMemoryMb(TargetKind target) => target == TargetKind.Oracle ? 2560 : target is TargetKind.SqlServer or TargetKind.Elasticsearch or TargetKind.OpenSearch ? 2048 : target == TargetKind.CockroachDb ? 1024 : 512;
     public static TargetInfo Get(TargetKind kind) => Targets.Single(x => x.Kind == kind);
@@ -99,8 +98,6 @@ public sealed record BenchmarkConfig
             throw new ArgumentException("Лимит CPU базы должен помещаться в число CPU виртуальной машины.");
         if (Targets.Count == 0 || Targets.Distinct().Count() != Targets.Count || Targets.Any(t => !Enum.IsDefined(t)))
             throw new ArgumentException("Выберите СУБД без повторов.");
-        if (Targets.Any(Catalog.CSharpOnly) && EngineIds.Any(id => id != "csharp"))
-            throw new ArgumentException("SQL Server, DuckDB, Oracle, CockroachDB, Elasticsearch и OpenSearch пока поддерживают только движок C#.");
         foreach (var target in Targets.Where(target => !Catalog.Embedded(target)))
         {
             if (MemoryMb < Catalog.MinimumMemoryMb(target)) throw new ArgumentException($"Для {Catalog.Get(target).Name} нужно не менее {Catalog.MinimumMemoryMb(target)} МБ памяти контейнера.");

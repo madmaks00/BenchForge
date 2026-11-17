@@ -23,7 +23,7 @@ enum Backend {
     Redis(redis::Connection),
     ClickHouse(reqwest::blocking::Client),
 }
-pub struct Database {
+pub struct OriginalDatabase {
     run: Arc<Run>,
     backend: Backend,
     prefix: String,
@@ -41,7 +41,7 @@ fn number(v: &Bson) -> Result<i64> {
         _ => bail!("Expected integer aggregate"),
     }
 }
-fn dependency(name: &str) -> String {
+pub(crate) fn dependency(name: &str) -> String {
     let mut current = false;
     for line in include_str!("../Cargo.lock").lines() {
         if line.starts_with("name = ") {
@@ -56,7 +56,7 @@ fn dependency(name: &str) -> String {
     }
     name.to_owned()
 }
-impl Database {
+impl OriginalDatabase {
     pub fn open(run: Arc<Run>) -> Result<Self> {
         let ep = &run.endpoint;
         let backend = match run.target.as_str() {
@@ -810,4 +810,60 @@ impl Database {
 fn sql(operation: &str, pg: bool) -> String {
     let p = if pg { "$1" } else { "?" };
     match operation{"PointRead"=>format!("SELECT id,group_id,amount_cents,version,payload FROM records WHERE id={}",p),"RangeRead"=>format!("SELECT id,group_id,amount_cents,version,payload FROM records WHERE id>={} ORDER BY id LIMIT 100",p),"Aggregate"=>format!("SELECT group_id,COUNT(*),{} FROM records WHERE group_id={} GROUP BY group_id",if pg{"SUM(amount_cents)::bigint"}else{"SUM(amount_cents)"},p),"Update"=>format!("UPDATE records SET version=version+1 WHERE id={}",p),"Delete"=>format!("DELETE FROM records WHERE id={}",p),_=>if pg{"INSERT INTO records VALUES($1,$2,$3,$4,$5)".into()}else{"INSERT INTO records VALUES(?,?,?,?,?)".into()}}
+}
+
+pub enum Database {
+    Original(OriginalDatabase),
+    Extended(crate::extended::Extended),
+}
+impl Database {
+    pub fn open(run: Arc<Run>) -> Result<Self> {
+        if crate::extended::supports(&run.target) {
+            Ok(Self::Extended(crate::extended::Extended::open(run)?))
+        } else {
+            Ok(Self::Original(OriginalDatabase::open(run)?))
+        }
+    }
+    pub fn reset(&mut self) -> Result<()> {
+        match self {
+            Self::Original(d) => d.reset(),
+            Self::Extended(d) => d.reset(),
+        }
+    }
+    pub fn batch(&mut self, rows: &[Row]) -> Result<()> {
+        match self {
+            Self::Original(d) => d.batch(rows),
+            Self::Extended(d) => d.batch(rows),
+        }
+    }
+    pub fn prepare(&mut self) -> Result<()> {
+        match self {
+            Self::Original(d) => d.prepare(),
+            Self::Extended(d) => d.prepare(),
+        }
+    }
+    pub fn digest(&mut self) -> Result<[i64; 3]> {
+        match self {
+            Self::Original(d) => d.digest(),
+            Self::Extended(d) => d.digest(),
+        }
+    }
+    pub fn count(&mut self) -> Result<i64> {
+        match self {
+            Self::Original(d) => d.count(),
+            Self::Extended(d) => d.count(),
+        }
+    }
+    pub fn metadata(&mut self) -> Result<Value> {
+        match self {
+            Self::Original(d) => d.metadata(),
+            Self::Extended(d) => d.metadata(),
+        }
+    }
+    pub fn execute(&mut self, op: &str, key: i64, row: Option<&Row>, batch: &[Row]) -> Result<i64> {
+        match self {
+            Self::Original(d) => d.execute(op, key, row, batch),
+            Self::Extended(d) => d.execute(op, key, row, batch),
+        }
+    }
 }

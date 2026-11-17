@@ -11,7 +11,20 @@
 | `node` | `node` | Node.js 24.20+, `worker_threads`, встроенный `node:sqlite` |
 | `go` | `go` | Go 1.27.4+, goroutine на клиента, `modernc.org/sqlite` без CGO |
 
-Все движки поддерживают восемь целей: PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Valkey, ClickHouse, SQLite. SQL Server, DuckDB, Oracle, CockroachDB, Elasticsearch и OpenSearch пока поддерживаются только C#; при их выборе другие движки отключаются. Всего доступно 14 СУБД. Доступные операции определяет профиль СУБД: у Redis нет SQL-агрегации, у ClickHouse нет точечного CRUD. Поддерживаются заданная частота, пропуски расписания, прогрев, повторы, горячие ключи, этапы собственного графика и остановка с частичным отчётом.
+Все шесть движков поддерживают 14 БД в стандартных тестах. Профиль каждой БД определяет доступные операции. Например, полнотекстовый поиск доступен для Elasticsearch и OpenSearch, а аналитическое сканирование для ClickHouse и DuckDB. Поддерживаются заданная частота, прогрев, повторы, горячие ключи, этапы собственного графика и остановка с частичным отчётом. Свои SQL-сценарии запускаются на C#.
+
+| Движок | SQL Server | DuckDB | Oracle | CockroachDB |
+| --- | --- | --- | --- | --- |
+| C# | Microsoft.Data.SqlClient | DuckDB.NET | ODP.NET | Npgsql |
+| Java | Microsoft JDBC | DuckDB JDBC | Oracle JDBC Thin | PostgreSQL JDBC |
+| Python | python-tds | duckdb | python-oracledb Thin | psycopg |
+| Rust | Tiberius | DuckDB C API | rust-oracle / Oracle Instant Client | postgres |
+| Node.js | node-mssql / Tedious | DuckDB C API через Koffi | node-oracledb Thin | node-postgres |
+| Go | go-mssqldb | DuckDB C API через purego | go-ora | pgx |
+
+Для Elasticsearch и OpenSearch каждый движок выполняет HTTP-запросы своим клиентом. Встроенный DuckDB работает в процессе движка, поэтому его память входит в память процесса.
+
+Для всех движков временный Oracle-контейнер получает 28-символьный пароль со 144 случайными битами. Эта длина совместима с ограничением входа в go-ora 2.9.0. [Описание ошибки драйвера](https://github.com/sijms/go-ora/issues/774).
 
 ## Подготовка на Windows
 
@@ -37,7 +50,7 @@ bash workers/prepare.sh java,python,rust,node,go
 dotnet build BenchForge.slnx -c Release
 ```
 
-Скрипт определяет ОС и архитектуру; Windows-бинарники на Mac/Linux не используются. Для Python нужны готовые колёса зависимостей под выбранную версию Python и архитектуру. На Python с ограничением системных пакетов используется установка в отдельный `--target`, системные пакеты не заменяются.
+Скрипт определяет ОС и архитектуру. Для Python нужны готовые колёса зависимостей под выбранную версию и архитектуру. Движки Node.js, Go и Rust загружают официальную библиотеку DuckDB на этапе подготовки. Для Rust скрипт также скачивает Oracle Instant Client на Windows x64, Linux x64/ARM64 и macOS ARM64. На других поддерживаемых Oracle платформах установите Instant Client отдельно. В Ubuntu для Rust нужны `libaio` и `libnsl`, которые добавляет `install-linux.sh`. Библиотеки загружаются с путями отдельного процесса, системные переменные менять не требуется.
 
 Для режима чистой VM нажмите **«Подготовить шаблон»** в настройках окружения. Подготовка обновит принадлежащий BenchForge выключенный шаблон, установит Linux-движки и снова выключит его. Это может занять заметное время и требует свободного места. Запуск тестов и создание копий начинаются после подготовки.
 

@@ -19,11 +19,11 @@ public sealed class SqlServerTests
     }
 
     [Fact]
-    public void UnsupportedLanguagesAndInsufficientMemoryAreRejectedBeforeStarting()
+    public void AllLanguagesAreAllowedAndInsufficientMemoryIsRejectedBeforeStarting()
     {
         var config = new BenchmarkConfig { Targets = [TargetKind.SqlServer] };
         foreach (var engine in Engines.All.Where(engine => engine.Id != "csharp"))
-            Assert.Throws<ArgumentException>(() => (config with { EngineIds = ["csharp", engine.Id] }).Validate());
+            (config with { EngineIds = ["csharp", engine.Id] }).Validate();
         Assert.Throws<ArgumentException>(() => (config with { MemoryMb = 1024 }).Validate());
         Assert.Throws<ArgumentException>(() => (config with { VirtualMachine = new() { MemoryMb = 2048 } }).Validate());
         (config with { VirtualMachine = new() { MemoryMb = 4096 } }).Validate();

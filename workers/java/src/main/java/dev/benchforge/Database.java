@@ -21,6 +21,7 @@ import redis.clients.jedis.Jedis;
 final class Database implements AutoCloseable {
   final JsonNode run, ep;
   final String target, prefix;
+  ExtendedDatabase extended;
   Connection sql;
   MongoClient mongo;
   MongoDatabase mongoDb;
@@ -36,6 +37,10 @@ final class Database implements AutoCloseable {
     prefix = "dblab:" + run.path("runId").asText() + ":";
     String address = ep.path("host").asText() + ":" + ep.path("port").asInt(),
         database = ep.path("database").asText();
+    if (ExtendedDatabase.TARGETS.contains(target)) {
+      extended = new ExtendedDatabase(run);
+      return;
+    }
     var properties = new Properties();
     properties.setProperty("user", ep.path("username").asText());
     properties.setProperty("password", ep.path("password").asText());
@@ -163,6 +168,10 @@ final class Database implements AutoCloseable {
   }
 
   void reset() throws Exception {
+    if (extended != null) {
+      extended.reset();
+      return;
+    }
     if (mongo != null) {
       collection.drop();
       mongoDb.createCollection("records");
@@ -212,6 +221,10 @@ final class Database implements AutoCloseable {
   }
 
   void batch(List<Row> rows) throws Exception {
+    if (extended != null) {
+      extended.batch(rows);
+      return;
+    }
     if (mongo != null) {
       collection.insertMany(rows.stream().map(Database::doc).toList());
       return;
@@ -316,6 +329,10 @@ final class Database implements AutoCloseable {
   }
 
   void prepare() throws Exception {
+    if (extended != null) {
+      extended.prepare();
+      return;
+    }
     if (mongo != null) collection.createIndex(new Document("group_id", 1));
     else if (sql != null) {
       command("CREATE INDEX records_group_id ON records(group_id)");
@@ -327,6 +344,9 @@ final class Database implements AutoCloseable {
   }
 
   long[] digest() throws Exception {
+    if (extended != null) {
+      return extended.digest();
+    }
     if (mongo != null) {
       var result =
           collection
@@ -381,6 +401,9 @@ final class Database implements AutoCloseable {
   }
 
   long count() throws Exception {
+    if (extended != null) {
+      return extended.count();
+    }
     if (mongo != null) return collection.countDocuments();
     if (redis != null) return redis.dbSize();
     if (http != null)
@@ -393,6 +416,9 @@ final class Database implements AutoCloseable {
   }
 
   Object metadata() throws Exception {
+    if (extended != null) {
+      return extended.metadata();
+    }
     var settings = new LinkedHashMap<String, String>();
     settings.put("build", "Release");
     settings.put("generator", GENERATOR);
@@ -473,6 +499,9 @@ final class Database implements AutoCloseable {
   }
 
   long execute(String operation, long key, Row row, List<Row> batch) throws Exception {
+    if (extended != null) {
+      return extended.execute(operation, key, row, batch);
+    }
     if (operation.equals("BatchInsert")) {
       batch(batch);
       return batch.size();
@@ -630,6 +659,10 @@ final class Database implements AutoCloseable {
 
   @Override
   public void close() {
+    if (extended != null) {
+      extended.close();
+      return;
+    }
     for (var statement : statements.values())
       try {
         statement.close();

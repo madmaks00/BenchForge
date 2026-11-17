@@ -11,7 +11,7 @@ apt-get update
 packages=(python3 curl ca-certificates xz-utils)
 if has java; then packages+=(openjdk-21-jdk-headless maven); fi
 if has python; then packages+=(python3-pip python3-venv); fi
-if has rust; then packages+=(build-essential pkg-config libssl-dev); fi
+if has rust; then packages+=(build-essential pkg-config libssl-dev libaio1t64 libnsl2); fi
 apt-get install -y "${packages[@]}"
 tools=/opt/benchforge-toolchains
 mkdir -p -- "$tools" "$tools/node"
@@ -59,5 +59,5 @@ for name in ['node.tar.xz', 'go.tar.gz']:
 PY
 # The guest coordinator invokes these runtimes directly.
 if has node; then ln -sf "$tools/node/bin/node" /usr/local/bin/node; fi
-printf '%s\n' native-workers-v1 > /etc/benchforge-workers
+printf '%s\n' native-workers-v2 > /etc/benchforge-workers
 sync

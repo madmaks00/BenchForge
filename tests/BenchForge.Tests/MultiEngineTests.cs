@@ -8,6 +8,16 @@ namespace BenchForge.Tests;
 public sealed class MultiEngineTests
 {
     [Fact]
+    public void StandardBenchmarksAllowTheCompleteDatabaseAndLanguageMatrix()
+    {
+        var config = new BenchmarkConfig { Targets = Catalog.Targets.Select(target => target.Kind).ToList(),
+            EngineIds = Engines.All.Select(engine => engine.Id).ToList(), MemoryMb = 2560 };
+        config.Validate();
+        Assert.Equal(84, config.Targets.Count * config.EngineIds.Count);
+        foreach (var target in config.Targets)
+            Assert.NotEmpty(config.Operations(target));
+    }
+    [Fact]
     public void OldConfigurationsKeepCSharpAndInvalidSelectionsFailEarly()
     {
         var old = JsonSerializer.Deserialize<BenchmarkConfig>("{}", Json.Options)!;

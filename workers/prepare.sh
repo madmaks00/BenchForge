@@ -19,14 +19,15 @@ for engine in "${engines[@]}"; do
   echo "Preparing $engine ..."
   target="$staging/$engine"
   mkdir -p -- "$target"
+  if [[ "$engine" == node || "$engine" == go || "$engine" == rust ]]; then python3 "$root/native-libraries.py" "$engine" "$target" "$tools"; fi
   case "$engine" in
     python)
-      cp -- "$root/python/worker.py" "$root/python/portable.py" "$root/python/adapters.py" "$target/"
+      cp -- "$root"/python/*.py "$target/"
       python3 -m pip install --disable-pip-version-check --only-binary=:all: --target "$target/vendor" -r "$root/python/requirements.lock.txt"
       python3 "$target/worker.py" --self-test
       ;;
     node)
-      cp -- "$root/node/worker.mjs" "$root/node/portable.mjs" "$root/node/adapters.mjs" "$root/node/package.json" "$root/node/package-lock.json" "$target/"
+      cp -- "$root"/node/*.mjs "$root/node/package.json" "$root/node/package-lock.json" "$target/"
       npm ci --prefix "$target" --ignore-scripts --no-audit --no-fund
       node "$target/worker.mjs" --self-test
       ;;
@@ -67,7 +68,7 @@ except BaseException:
  if backup.exists(): backup.rename(destination)
  raise
 executable,arguments=launch[engine]
-entries=[entry for entry in entries if entry['engine']!=engine]+[dict(engine=engine,executable=executable,arguments=arguments)]
+entries=[entry for entry in entries if entry['engine']!=engine]+[dict(engine=engine,executable=executable,arguments=arguments,version='native-workers-v2')]
 temporary=dist/'engines.json.tmp'
 temporary.write_text(json.dumps(entries,indent=2)+'\n')
 os.replace(temporary,manifest)

@@ -1,3 +1,4 @@
+import { ExtendedDatabase, extendedTargets } from './extended.mjs';
 import { createRequire } from 'node:module';
 import { once } from 'node:events';
 const require = createRequire(import.meta.url);
@@ -18,6 +19,7 @@ export class Database {
     this.statements = {};
   }
   async open() {
+    if (extendedTargets.has(this.target)) return new ExtendedDatabase(this.run).open();
     const e = this.ep,
       t = this.target;
     try {

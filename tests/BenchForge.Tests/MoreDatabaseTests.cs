@@ -14,11 +14,11 @@ public sealed class MoreDatabaseTests
     [Theory]
     [InlineData(TargetKind.DuckDb)] [InlineData(TargetKind.Oracle)] [InlineData(TargetKind.CockroachDb)]
     [InlineData(TargetKind.Elasticsearch)] [InlineData(TargetKind.OpenSearch)]
-    public void NewTargetsRejectUnimplementedLanguageEngines(TargetKind target)
+    public void NewTargetsAllowAllNativeLanguageEngines(TargetKind target)
     {
         var config = new BenchmarkConfig { Targets = [target], MemoryMb = Math.Max(2048, Catalog.MinimumMemoryMb(target)) }; config.Validate();
         foreach (var engine in Engines.All.Where(item => item.Id != "csharp"))
-            Assert.Throws<ArgumentException>(() => (config with { EngineIds = [engine.Id] }).Validate());
+            (config with { EngineIds = [engine.Id] }).Validate();
         Assert.Equal(target, JsonSerializer.Deserialize<BenchmarkConfig>(JsonSerializer.Serialize(config, Json.Options), Json.Options)!.Targets[0]);
     }
     [Fact]

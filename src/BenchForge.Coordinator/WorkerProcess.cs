@@ -18,6 +18,7 @@ public sealed class WorkerProcess : IWorkerHost
         var launch = WorkerCatalog.Resolve(run.Engine);
         var info = ProcessUtil.Info(launch.Executable, launch.Arguments);
         info.WorkingDirectory = launch.Directory;
+        WorkerCatalog.ConfigureNativeLibraries(info, launch);
         info.RedirectStandardInput = true;
         using var process = Process.Start(info) ?? throw new InvalidOperationException("Не удалось запустить движок " + run.Engine);
         var stderr = process.StandardError.ReadToEndAsync();

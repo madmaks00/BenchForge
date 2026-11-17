@@ -1,4 +1,9 @@
-import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
+import {
+  Worker,
+  isMainThread,
+  parentPort,
+  workerData,
+} from 'node:worker_threads';
 import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 import { GENERATOR, Random, Histogram, row, vectors } from './portable.mjs';
@@ -14,15 +19,31 @@ const scenarios = [
   'Insert',
   'BatchInsert',
   'Delete',
+  'FullTextSearch',
 ];
 const caps = Object.fromEntries(
   ['sqlite', 'postgreSql', 'mySql', 'mariaDb', 'mongoDb'].map((t) => [
     t,
-    scenarios.filter((s) => s !== 'AnalyticalScan'),
+    scenarios.filter((s) => !['AnalyticalScan', 'FullTextSearch'].includes(s)),
   ]),
 );
-caps.redis = caps.valkey = ['PointRead', 'Update', 'Mixed', 'Insert', 'BatchInsert', 'Delete'];
+caps.redis = caps.valkey = [
+  'PointRead',
+  'Update',
+  'Mixed',
+  'Insert',
+  'BatchInsert',
+  'Delete',
+];
 caps.clickHouse = ['RangeRead', 'Aggregate', 'AnalyticalScan', 'BatchInsert'];
+for (const target of ['sqlServer', 'oracle', 'cockroachDb'])
+  caps[target] = scenarios.filter(
+    (s) => !['AnalyticalScan', 'FullTextSearch'].includes(s),
+  );
+caps.duckDb = scenarios.filter((s) => s !== 'FullTextSearch');
+caps.elasticsearch = caps.openSearch = scenarios.filter(
+  (s) => s !== 'AnalyticalScan',
+);
 const defaults = {
   durationSeconds: 5,
   warmupSeconds: 2,
@@ -38,7 +59,10 @@ const defaults = {
 const clock = () => Number(process.hrtime.bigint()) / 1e9;
 const cancelled = (flag) => Atomics.load(flag, 0) !== 0;
 const batchSize = (c) =>
-  Math.min(c.batchSize, Math.max(1, Math.floor((8 * 1024 * 1024) / (c.payloadBytes + 128))));
+  Math.min(
+    c.batchSize,
+    Math.max(1, Math.floor((8 * 1024 * 1024) / (c.payloadBytes + 128))),
+  );
 const base = (run, phase) => ({
   engine: 'node',
   target: run.target,
@@ -49,7 +73,12 @@ const base = (run, phase) => ({
 });
 const emit = (run, type, data) =>
   process.stdout.write(
-    JSON.stringify({ protocolVersion: 1, type, runId: run?.runId ?? '', data }) + '\n',
+    JSON.stringify({
+      protocolVersion: 1,
+      type,
+      runId: run?.runId ?? '',
+      data,
+    }) + '\n',
   );
 
 if (!isMainThread) {
@@ -98,7 +127,12 @@ if (!isMainThread) {
           const lag = clock() - scheduled;
           if (lag > config.maxStartLagMs / 1000) {
             const skipped = Math.min(
-              Math.max(1, Math.floor(((lag - config.maxStartLagMs / 1000) * rate) / clients) + 1),
+              Math.max(
+                1,
+                Math.floor(
+                  ((lag - config.maxStartLagMs / 1000) * rate) / clients,
+                ) + 1,
+              ),
               Math.floor((planned - 1 - slot) / clients) + 1,
             );
             c.dropped += skipped;
@@ -114,7 +148,11 @@ if (!isMainThread) {
           }
         }
         const selected =
-          operation === 'Mixed' ? (rng.next() % 100n < 80n ? 'PointRead' : 'Update') : operation;
+          operation === 'Mixed'
+            ? rng.next() % 100n < 80n
+              ? 'PointRead'
+              : 'Update'
+            : operation;
         let key = rng.key(run.rows, config.hotspot),
           one = null,
           batch = null;
@@ -126,14 +164,17 @@ if (!isMainThread) {
               1;
           if (!Number.isSafeInteger(first + size))
             throw Error('Generated ID exceeds JavaScript safe integer range');
-          if (selected === 'Insert') one = row(first, config.seed, config.payloadBytes);
+          if (selected === 'Insert')
+            one = row(first, config.seed, config.payloadBytes);
           else
             batch = Array.from({ length: size }, (_, i) =>
               row(first + i, config.seed, config.payloadBytes),
             );
         }
         if (selected === 'Delete') {
-          key = stage ? Number(Atomics.add(deleted, 0, 1n)) + 1 : sequence * clients + index + 1;
+          key = stage
+            ? Number(Atomics.add(deleted, 0, 1n)) + 1
+            : sequence * clients + index + 1;
           if (key > run.rows) break;
         }
         const before = clock();
@@ -157,7 +198,11 @@ if (!isMainThread) {
         slot += clients;
         if (c.errors >= 50) break;
         if (clock() >= reportAt) {
-          parentPort.postMessage({ type: 'progress', success: c.success, errors: c.errors });
+          parentPort.postMessage({
+            type: 'progress',
+            success: c.success,
+            errors: c.errors,
+          });
           reportAt = clock() + 0.25;
         }
       }
@@ -193,15 +238,18 @@ if (!isMainThread) {
   input.on('line', (line) => {
     try {
       if (line.length > 1048576) throw Error('Command too long');
-      const command = JSON.parse(line.replace(/^\uFEFF/, ''), (key, value, context) =>
-        key === 'seed' ? BigInt(context.source) : value,
+      const command = JSON.parse(
+        line.replace(/^\uFEFF/, ''),
+        (key, value, context) =>
+          key === 'seed' ? BigInt(context.source) : value,
       );
       if (command.protocolVersion !== 1) throw Error('Expected protocol v1');
       if (command.type === 'cancel') {
         Atomics.store(flag, 0, 1);
         return;
       }
-      if (active || command.type !== 'run') throw Error('Expected one run command');
+      if (active || command.type !== 'run')
+        throw Error('Expected one run command');
       active = true;
       run = command.run;
       if (
@@ -266,8 +314,9 @@ async function benchmark(run, flag) {
     for (let first = 1; first <= run.rows; first += batchSize(config)) {
       check();
       const before = clock(),
-        batch = Array.from({ length: Math.min(batchSize(config), run.rows - first + 1) }, (_, i) =>
-          row(first + i, config.seed, config.payloadBytes),
+        batch = Array.from(
+          { length: Math.min(batchSize(config), run.rows - first + 1) },
+          (_, i) => row(first + i, config.seed, config.payloadBytes),
         );
       generation += clock() - before;
       await db.batch(batch);
@@ -313,7 +362,9 @@ async function benchmark(run, flag) {
         verified: true,
       });
     }
-    const requested = config.scenarios.map((s) => s[0].toUpperCase() + s.slice(1));
+    const requested = config.scenarios.map(
+      (s) => s[0].toUpperCase() + s.slice(1),
+    );
     for (const name of requested)
       if (!caps[run.target].includes(name))
         emit(run, 'unsupported', {
@@ -326,7 +377,10 @@ async function benchmark(run, flag) {
         (requested.length
           ? requested.includes(s)
           : !config.plan ||
-            s === (caps[run.target].includes('PointRead') ? 'PointRead' : 'RangeRead')),
+            s ===
+              (caps[run.target].includes('PointRead')
+                ? 'PointRead'
+                : 'RangeRead')),
     );
     let expected = run.rows;
     async function pool(count) {
@@ -343,14 +397,19 @@ async function benchmark(run, flag) {
           const client = { worker, index, success: 0, errors: 0 };
           clients.push(client);
           await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => reject(Error('Client startup timeout')), 30000);
+            const timer = setTimeout(
+              () => reject(Error('Client startup timeout')),
+              30000,
+            );
             worker.once('error', (e) => {
               clearTimeout(timer);
               reject(e);
             });
             worker.once('message', (message) => {
               clearTimeout(timer);
-              message.type === 'ready' ? resolve() : reject(Error('Client not ready'));
+              message.type === 'ready'
+                ? resolve()
+                : reject(Error('Client not ready'));
             });
           });
         }
@@ -372,7 +431,15 @@ async function benchmark(run, flag) {
         }),
       );
     }
-    async function measure(clients, operation, seconds, count, rate, stage, progress) {
+    async function measure(
+      clients,
+      operation,
+      seconds,
+      count,
+      rate,
+      stage,
+      progress,
+    ) {
       const selected = clients.slice(0, count),
         started = clock() + 0.01,
         cpu = process.cpuUsage();
@@ -428,7 +495,10 @@ async function benchmark(run, flag) {
         clearInterval(sampler);
         if (reporter) clearInterval(reporter);
       }
-      const elapsed = Math.max(1e-6, Math.max(...values.map((v) => v.finished)) - started),
+      const elapsed = Math.max(
+          1e-6,
+          Math.max(...values.map((v) => v.finished)) - started,
+        ),
         used = process.cpuUsage(cpu),
         service = new Histogram(),
         end = new Histogram(),
@@ -438,7 +508,8 @@ async function benchmark(run, flag) {
         service.merge(value.service);
         end.merge(value.end);
         failed.merge(value.failed);
-        for (const [k, v] of Object.entries(value.examples)) examples[k] = (examples[k] || 0) + v;
+        for (const [k, v] of Object.entries(value.examples))
+          examples[k] = (examples[k] || 0) + v;
       }
       const sum = (key) => values.reduce((n, c) => n + c[key], 0),
         success = sum('success'),
@@ -456,9 +527,13 @@ async function benchmark(run, flag) {
         errors,
         dropped,
         plannedOperations:
-          rate && !cancelled(flag) ? Math.floor(seconds * rate) : success + errors + dropped,
+          rate && !cancelled(flag)
+            ? Math.floor(seconds * rate)
+            : success + errors + dropped,
         operationsPerSecond: success / elapsed,
-        rowsPerSecond: ['Insert', 'BatchInsert', 'Update', 'Delete'].includes(operation)
+        rowsPerSecond: ['Insert', 'BatchInsert', 'Update', 'Delete'].includes(
+          operation,
+        )
           ? affected / elapsed
           : null,
         serviceLatency: service.snapshot(),
@@ -491,7 +566,9 @@ async function benchmark(run, flag) {
           caps[run.target].includes('PointRead') ? 'PointRead' : 'RangeRead',
           config.warmupSeconds,
           count,
-          !config.plan && config.loadModel === 'constantRate' ? config.targetOpsPerSecond : null,
+          !config.plan && config.loadModel === 'constantRate'
+            ? config.targetOpsPerSecond
+            : null,
           null,
           false,
         );
@@ -500,6 +577,7 @@ async function benchmark(run, flag) {
         await close(clients);
       }
     }
+    operations.sort((a, b) => Number(a === 'Delete') - Number(b === 'Delete'));
     for (const operation of operations) {
       check();
       const clients = await pool(run.clients);
@@ -510,7 +588,9 @@ async function benchmark(run, flag) {
             clients: run.clients,
             seconds: config.durationSeconds,
             operationsPerSecond:
-              config.loadModel === 'constantRate' ? config.targetOpsPerSecond : null,
+              config.loadModel === 'constantRate'
+                ? config.targetOpsPerSecond
+                : null,
           },
         ];
         for (let index = 0; index < stages.length; index++) {
@@ -545,10 +625,13 @@ async function benchmark(run, flag) {
           if (operation === 'Delete') expected -= result.successfulRows;
           const actual = await db.count();
           result.verified =
-            actual === expected && result.successfulOperations > 0 && !cancelled(flag);
+            actual === expected &&
+            result.successfulOperations > 0 &&
+            !cancelled(flag);
           result.cancelled = cancelled(flag);
           emit(run, 'result', result);
-          if (actual !== expected) throw Error(`Count mismatch: ${actual} != ${expected}`);
+          if (actual !== expected)
+            throw Error(`Count mismatch: ${actual} != ${expected}`);
           if (!config.plan && !result.successfulOperations && !cancelled(flag))
             throw Error('No successful operations');
         }

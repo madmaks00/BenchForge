@@ -26,6 +26,7 @@ import (
 var background = context.Background()
 
 type database struct {
+	extra      *extendedDatabase
 	run        *runCase
 	db         *sql.DB
 	pg         *pgx.Conn
@@ -38,6 +39,13 @@ type database struct {
 }
 
 func openDatabase(run *runCase) (*database, error) {
+	if extendedTarget(run.Target) {
+		extra, err := openExtended(run)
+		if err != nil {
+			return nil, err
+		}
+		return &database{run: run, extra: extra}, nil
+	}
 	d := &database{run: run, prefix: "dblab:" + run.RunID + ":", statements: map[string]*sql.Stmt{}}
 	e := run.Endpoint
 	var err error
@@ -124,6 +132,9 @@ func (d *database) query(query, body string) (string, error) {
 	return string(data), nil
 }
 func (d *database) reset() error {
+	if d.extra != nil {
+		return d.extra.reset()
+	}
 	switch d.run.Target {
 	case "mongoDb":
 		err := d.collection.Drop(background)
@@ -155,6 +166,9 @@ func doc(r dataRow) bson.M {
 	return bson.M{"_id": r.ID, "group_id": r.Group, "amount_cents": r.Amount, "version": r.Version, "payload": r.Payload}
 }
 func (d *database) batch(rows []dataRow) error {
+	if d.extra != nil {
+		return d.extra.batch(rows)
+	}
 	switch d.run.Target {
 	case "mongoDb":
 		documents := make([]any, len(rows))
@@ -223,6 +237,9 @@ func (d *database) batch(rows []dataRow) error {
 	}
 }
 func (d *database) prepare() error {
+	if d.extra != nil {
+		return d.extra.prepare()
+	}
 	if d.collection != nil {
 		_, err := d.collection.Indexes().CreateOne(background, mongo.IndexModel{Keys: bson.D{{Key: "group_id", Value: 1}}})
 		return err
@@ -247,6 +264,9 @@ func (d *database) prepare() error {
 	return err
 }
 func (d *database) digest() ([3]int64, error) {
+	if d.extra != nil {
+		return d.extra.digest()
+	}
 	var sum [3]int64
 	if d.collection != nil {
 		pipeline := mongo.Pipeline{bson.D{{Key: "$group", Value: bson.M{"_id": nil, "n": bson.M{"$sum": 1}, "ids": bson.M{"$sum": "$_id"}, "amount": bson.M{"$sum": "$amount_cents"}}}}}
@@ -308,6 +328,9 @@ func (d *database) digest() ([3]int64, error) {
 	return sum, err
 }
 func (d *database) count() (int64, error) {
+	if d.extra != nil {
+		return d.extra.count()
+	}
 	if d.collection != nil {
 		return d.collection.CountDocuments(background, bson.D{})
 	}
@@ -326,6 +349,9 @@ func (d *database) count() (int64, error) {
 	return count, err
 }
 func (d *database) metadata() (map[string]any, error) {
+	if d.extra != nil {
+		return d.extra.metadata()
+	}
 	settings := map[string]string{"build": "Release", "generator": generator, "connections": "dedicated connection per logical client; goroutines", "batch_transport": "native driver batching"}
 	var version, driver string
 	var err error
@@ -403,6 +429,9 @@ func (d *database) metadata() (map[string]any, error) {
 	return map[string]any{"engine": "go", "runtime": runtimeVersion(), "driver": driver, "serverVersion": version, "settings": settings}, err
 }
 func (d *database) execute(operation string, key int64, row *dataRow, batch []dataRow) (int64, error) {
+	if d.extra != nil {
+		return d.extra.execute(operation, key, row, batch)
+	}
 	if operation == "BatchInsert" {
 		err := d.batch(batch)
 		return int64(len(batch)), err
@@ -603,6 +632,10 @@ func (d *database) execute(operation string, key int64, row *dataRow, batch []da
 	return n, err
 }
 func (d *database) close() {
+	if d.extra != nil {
+		d.extra.close()
+		return
+	}
 	for _, s := range d.statements {
 		s.Close()
 	}

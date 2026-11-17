@@ -34,7 +34,7 @@ public static class ServerAgentBundle
             output.Add(relative.Replace('\\', '/'));
         }
         foreach (var file in new[] { "Directory.Build.props", "Directory.Build.targets", "global.json", "NuGet.Config",
-            "server/Agent.Dockerfile", "server/agentctl.sh", "server/entrypoint.sh", "workers/prepare.sh", "workers/install-linux.sh" }) Add(file);
+            "server/Agent.Dockerfile", "server/agentctl.sh", "server/entrypoint.sh", "workers/prepare.sh", "workers/install-linux.sh", "workers/native-libraries.py" }) Add(file);
         foreach (var name in new[] { "BenchForge.Contracts", "BenchForge.Coordinator", "BenchForge.Cli", "BenchForge.Worker.CSharp" })
         {
             var directory = Path.Combine(root, "src", name);

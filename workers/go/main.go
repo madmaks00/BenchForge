@@ -35,6 +35,8 @@ type plan struct {
 	Stages []stage `json:"stages"`
 }
 type config struct {
+	MemoryMb  int      `json:"memoryMb"`
+	CpuLimit  float64  `json:"cpuLimit"`
 	Duration  float64  `json:"durationSeconds"`
 	Warmup    float64  `json:"warmupSeconds"`
 	Payload   int      `json:"payloadBytes"`
@@ -50,7 +52,7 @@ type config struct {
 
 func (c *config) UnmarshalJSON(data []byte) error {
 	type plain config
-	value := plain{Duration: 5, Warmup: 2, Payload: 256, Batch: 1000, Seed: 42, LoadModel: "closedLoop", Rate: 1000, MaxLag: 20}
+	value := plain{MemoryMb: 512, CpuLimit: 2, Duration: 5, Warmup: 2, Payload: 256, Batch: 1000, Seed: 42, LoadModel: "closedLoop", Rate: 1000, MaxLag: 20}
 	if err := json.Unmarshal(data, &value); err != nil {
 		return err
 	}
@@ -76,10 +78,14 @@ type command struct {
 
 var stop atomic.Bool
 var output sync.Mutex
-var scenarios = []string{"PointRead", "RangeRead", "Aggregate", "AnalyticalScan", "Update", "Mixed", "Insert", "BatchInsert", "Delete"}
+var scenarios = []string{"PointRead", "RangeRead", "Aggregate", "AnalyticalScan", "Update", "Mixed", "Insert", "BatchInsert", "Delete", "FullTextSearch"}
 
 func capabilities(target string) []string {
 	switch target {
+	case "duckDb":
+		return []string{"PointRead", "RangeRead", "Aggregate", "AnalyticalScan", "Update", "Mixed", "Insert", "BatchInsert", "Delete"}
+	case "elasticsearch", "openSearch":
+		return []string{"PointRead", "RangeRead", "Aggregate", "Update", "Mixed", "Insert", "BatchInsert", "FullTextSearch", "Delete"}
 	case "clickHouse":
 		return []string{"RangeRead", "Aggregate", "AnalyticalScan", "BatchInsert"}
 	case "redis", "valkey":
@@ -535,6 +541,7 @@ func benchmark(run *runCase) error {
 			operations = append(operations, s)
 		}
 	}
+	sort.SliceStable(operations, func(i, j int) bool { return operations[i] != "Delete" && operations[j] == "Delete" })
 	if run.Config.Warmup > 0 {
 		count := run.Clients
 		if run.Config.Plan != nil {

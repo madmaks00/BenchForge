@@ -6,7 +6,7 @@
         $(MSBuildThisFileDirectory)src/BenchForge.Coordinator/**/*.cs;$(MSBuildThisFileDirectory)src/BenchForge.Coordinator/*.csproj;$(MSBuildThisFileDirectory)src/BenchForge.Coordinator/packages.lock.json;
         $(MSBuildThisFileDirectory)src/BenchForge.Cli/**/*.cs;$(MSBuildThisFileDirectory)src/BenchForge.Cli/*.csproj;$(MSBuildThisFileDirectory)src/BenchForge.Cli/packages.lock.json;
         $(MSBuildThisFileDirectory)src/BenchForge.Worker.CSharp/**/*.cs;$(MSBuildThisFileDirectory)src/BenchForge.Worker.CSharp/*.csproj;$(MSBuildThisFileDirectory)src/BenchForge.Worker.CSharp/packages.lock.json;
-        $(MSBuildThisFileDirectory)workers/prepare.sh;$(MSBuildThisFileDirectory)workers/install-linux.sh;
+        $(MSBuildThisFileDirectory)workers/prepare.sh;$(MSBuildThisFileDirectory)workers/install-linux.sh;$(MSBuildThisFileDirectory)workers/native-libraries.py;
         $(MSBuildThisFileDirectory)workers/java/pom.xml;$(MSBuildThisFileDirectory)workers/java/src/**/*.java;
         $(MSBuildThisFileDirectory)workers/python/*.py;$(MSBuildThisFileDirectory)workers/python/requirements.lock.txt;
         $(MSBuildThisFileDirectory)workers/node/*.mjs;$(MSBuildThisFileDirectory)workers/node/package.json;$(MSBuildThisFileDirectory)workers/node/package-lock.json;

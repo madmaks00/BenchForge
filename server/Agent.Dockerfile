@@ -19,6 +19,7 @@ LABEL benchforge.agent=server-v1 benchforge.source=$BENCHFORGE_SOURCE benchforge
 RUN set -eu; packages='ca-certificates libstdc++6'; \
     case ",$BENCHFORGE_ENGINES," in *,java,*) packages="$packages openjdk-21-jre-headless" ;; esac; \
     case ",$BENCHFORGE_ENGINES," in *,python,*) packages="$packages python3" ;; esac; \
+    case ",$BENCHFORGE_ENGINES," in *,rust,*) packages="$packages libaio1t64 libnsl2" ;; esac; \
     apt-get update && apt-get install -y --no-install-recommends $packages && rm -rf /var/lib/apt/lists/*
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=build /out/agent /opt/benchforge

@@ -32,7 +32,11 @@ public sealed class OwnedTarget(TargetKind target, BenchmarkConfig config, strin
         try { await ProcessUtil.RunAsync(_docker, ["image", "inspect", image], token, 15); }
         catch (InvalidOperationException)
         { log("Загрузка образа " + image); await ProcessUtil.RunAsync(_docker, ["pull", image], token, 1800); }
-        var password = "Bf!a" + Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
+        // go-ora does not advertise Oracle's long-password logon capability.
+        // Keep the same 144-bit random password profile for every Oracle engine.
+        var password = target == TargetKind.Oracle
+            ? "Bf!a" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(18)).Replace('+', '-').Replace('/', '_')
+            : "Bf!a" + Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
         var environment = new Dictionary<string, string>();
         _container = "dblab-" + target.ToString().ToLowerInvariant() + "-" + caseId[..12];
         var args = new List<string> { "run", "--detach", "--rm", "--name", _container, "--label", "dblab.case=" + caseId,

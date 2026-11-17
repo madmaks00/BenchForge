@@ -46,7 +46,6 @@ public sealed class ExperimentSetupView : UserControl
             if (_fields.TryGetValue("payload", out var payload)) payload.IsEnabled = !active;
             if (active) { _engines.Apply(["csharp"]); _selected.RemoveWhere(target => !SqlWorkload.Supports(target)); if (_selected.Count == 0) _selected.Add(TargetKind.Sqlite); }
             foreach (var (target, controls) in _databases) { controls.Button.IsEnabled = !active || SqlWorkload.Supports(target); PaintDatabase(target); }
-            _engines.SetRestrictedMode(_selected.Any(Catalog.CSharpOnly));
             _selection.Text = "Выбрано: " + _selected.Count;
         };
         var root = new Grid { RowDefinitions = new RowDefinitions { new(GridLength.Auto), _pageRow, new(GridLength.Auto), new(GridLength.Auto) } };
@@ -107,7 +106,6 @@ public sealed class ExperimentSetupView : UserControl
             {
                 if (!_selected.Remove(target.Kind)) _selected.Add(target.Kind);
                 PaintDatabase(target.Kind);
-                _engines.SetRestrictedMode(_selected.Any(Catalog.CSharpOnly));
                 var minimumMemory = _selected.Select(Catalog.MinimumMemoryMb).DefaultIfEmpty(512).Max();
                 if (_fields.TryGetValue("memory", out var memory) && int.TryParse(memory.Text, out var currentMemory) && currentMemory < minimumMemory)
                     memory.Text = minimumMemory.ToString(CultureInfo.InvariantCulture);
@@ -255,7 +253,6 @@ public sealed class ExperimentSetupView : UserControl
         _environment.ApplyRemote(config.RemoteServer);
         _engines.Apply(config.EngineIds);
         _custom.Apply(config.CustomWorkload, config.WorkloadDirectory);
-        _engines.SetRestrictedMode(_selected.Any(Catalog.CSharpOnly));
         _hotspot.IsChecked = config.Hotspot;
         _scenario.SelectedIndex = config.Scenarios.Count == 1 ? Array.IndexOf(Enum.GetValues<Scenario>(), config.Scenarios[0]) + 2 : config.Plan is null || config.Scenarios.Count > 1 ? 1 : 0;
         GoTo(_step);

@@ -21,9 +21,10 @@ SCENARIOS = [
     "Insert",
     "BatchInsert",
     "Delete",
+    "FullTextSearch",
 ]
 CAPABILITIES = {
-    name: [s for s in SCENARIOS if s != "AnalyticalScan"]
+    name: [s for s in SCENARIOS if s not in ("AnalyticalScan", "FullTextSearch")]
     for name in ["sqlite", "postgreSql", "mySql", "mariaDb", "mongoDb"]
 }
 CAPABILITIES.update(
@@ -31,6 +32,13 @@ CAPABILITIES.update(
     valkey=["PointRead", "Update", "Mixed", "Insert", "BatchInsert", "Delete"],
     clickHouse=["RangeRead", "Aggregate", "AnalyticalScan", "BatchInsert"],
 )
+for target in ("sqlServer", "oracle", "cockroachDb"):
+    CAPABILITIES[target] = [
+        s for s in SCENARIOS if s not in ("AnalyticalScan", "FullTextSearch")
+    ]
+CAPABILITIES["duckDb"] = [s for s in SCENARIOS if s != "FullTextSearch"]
+for target in ("elasticsearch", "openSearch"):
+    CAPABILITIES[target] = [s for s in SCENARIOS if s != "AnalyticalScan"]
 cancel = threading.Event()
 output_lock = threading.Lock()
 run = {}
@@ -422,6 +430,7 @@ def benchmark():
             finally:
                 for session in sessions:
                     session.close()
+        operations.sort(key=lambda name: name == "Delete")
         for operation in operations:
             check()
             sessions = []

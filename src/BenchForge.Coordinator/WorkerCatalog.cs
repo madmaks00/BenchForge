@@ -5,11 +5,11 @@ using BenchForge.Contracts;
 namespace BenchForge.Coordinator;
 
 public sealed record WorkerLaunch(string Executable, string[] Arguments, string Directory);
-public sealed record WorkerBundle(string Engine, string Executable, string[] Arguments);
+public sealed record WorkerBundle(string Engine, string Executable, string[] Arguments, string? Version = null);
 
 public static class WorkerCatalog
 {
-    public const string BundleVersion = "native-workers-v1";
+    public const string BundleVersion = "native-workers-v2";
     public static string Platform => (OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "osx" : "linux")
         + "-" + RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
 
@@ -35,10 +35,10 @@ public static class WorkerCatalog
             directory = Path.Combine(candidate, "dist", Platform);
             var manifest = Path.Combine(directory, "engines.json");
             var bundles = File.Exists(manifest) ? JsonSerializer.Deserialize<WorkerBundle[]>(File.ReadAllText(manifest), Json.Options) ?? [] : [];
-            bundle = bundles.SingleOrDefault(item => item.Engine == engine);
+            bundle = bundles.SingleOrDefault(item => item.Engine == engine && item.Version == BundleVersion);
             if (bundle is not null) break;
         }
-        if (bundle is null) throw new InvalidOperationException($"{Engines.Name(engine)} не подготовлен для {Platform}. Выполните workers/prepare.ps1 (Windows) или workers/prepare.sh (Linux/macOS).");
+        if (bundle is null) throw new InvalidOperationException($"Подготовьте или обновите движок {Engines.Name(engine)} для {Platform} в разделе «Движки нагрузки» либо скриптом workers/prepare.ps1 (Windows) или workers/prepare.sh (Linux/macOS).");
         var executable = bundle.Executable switch { "python" => OperatingSystem.IsWindows() ? "python" : "python3", _ => bundle.Executable };
         if (executable.StartsWith("./", StringComparison.Ordinal)) executable = Path.GetFullPath(Path.Combine(directory, executable[2..]));
         return new(executable, bundle.Arguments, directory);
@@ -50,6 +50,7 @@ public static class WorkerCatalog
         var launch = Resolve(engine);
         var info = ProcessUtil.Info(launch.Executable, launch.Arguments.Concat(["--self-test"]));
         info.WorkingDirectory = launch.Directory;
+        ConfigureNativeLibraries(info, launch);
         info.RedirectStandardInput = true;
         using var process = System.Diagnostics.Process.Start(info) ?? throw new InvalidOperationException("Не удалось запустить " + engine);
         var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
@@ -64,5 +65,14 @@ public static class WorkerCatalog
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         { throw new TimeoutException(Engines.Name(engine) + ": проверка запуска заняла больше минуты. Повторите её после завершения подготовки окружения."); }
         finally { if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(CancellationToken.None); } }
+    }
+
+    internal static void ConfigureNativeLibraries(System.Diagnostics.ProcessStartInfo info, WorkerLaunch launch)
+    {
+        var folder = Path.Combine(Path.GetDirectoryName(launch.Executable) ?? "", "native");
+        if (!Path.IsPathFullyQualified(folder) || !System.IO.Directory.Exists(folder)) return;
+        var variable = OperatingSystem.IsWindows() ? "PATH" : OperatingSystem.IsMacOS() ? "DYLD_LIBRARY_PATH" : "LD_LIBRARY_PATH";
+        info.Environment.TryGetValue(variable, out var previous);
+        info.Environment[variable] = folder + Path.PathSeparator + (previous ?? "");
     }
 }

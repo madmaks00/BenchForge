@@ -309,7 +309,11 @@ pub async fn tds(
     timeout: Duration,
 ) -> Result<Answer> {
     tokio::time::timeout(timeout, async {
-        if mode == "nonQuery" && values.is_empty() {
+        if mode == "nonQuery"
+            && values.is_empty()
+            && (matches!(text, "BEGIN TRANSACTION" | "COMMIT" | "ROLLBACK")
+                || text.starts_with("SET TRANSACTION ISOLATION LEVEL "))
+        {
             client.simple_query(text).await?.into_results().await?;
             return Ok(answer(None, 0));
         }

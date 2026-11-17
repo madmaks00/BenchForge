@@ -95,6 +95,7 @@ if (!isMainThread) {
   const db = await new Database(run).open();
   const custom = scope ? new CustomSession(db, run, scope, index) : null;
   let sequence = 0;
+  if (custom) await custom.io.configure();
   parentPort.postMessage({ type: 'ready' });
   parentPort.on('message', async (command) => {
     if (command.type === 'close') {

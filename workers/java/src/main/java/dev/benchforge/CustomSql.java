@@ -196,6 +196,7 @@ final class CustomSql {
     Connection conn = db.extended == null ? db.sql : db.extended.sql;
     if (conn == null) throw new IllegalArgumentException("The selected target has no JDBC SQL adapter");
     if (target.equals("sqlite")) exec(conn, "PRAGMA foreign_keys=ON");
+    if (target.equals("oracle")) exec(conn, "ALTER SESSION SET NLS_NUMERIC_CHARACTERS = '.,'");
     return conn;
   }
 

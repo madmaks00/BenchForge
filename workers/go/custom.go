@@ -343,6 +343,11 @@ func customConnection(d *database) (*sql.DB, error) {
 	if db == nil {
 		return nil, fmt.Errorf("target has no SQL connection")
 	}
+	if d.run.Target == "oracle" {
+		if _, err := db.Exec("ALTER SESSION SET NLS_NUMERIC_CHARACTERS = '.,'"); err != nil {
+			return nil, err
+		}
+	}
 	if d.run.Target == "sqlite" {
 		if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
 			return nil, err
@@ -702,7 +707,9 @@ func (client *customSession) execute(key int64, scheduled time.Time) (affected i
 			return 0, err
 		}
 		var stmt *sql.Stmt
-		if s.run.Config.Custom.PrepareCommands && tx == nil {
+		// go-ora's reusable query cursor can become invalid after a fetch completes.
+		// Keep bound parameters and let the Oracle driver prepare the active request.
+		if s.run.Config.Custom.PrepareCommands && tx == nil && s.run.Target != "oracle" {
 			stmt = client.prepared[cmd.SQL]
 			if stmt == nil {
 				stmt, err = client.db.PrepareContext(ctx, cmd.SQL)
@@ -803,6 +810,9 @@ func benchmarkCustom(run *runCase, native *database) error {
 	settings["workload_sha256"] = s.program.Fingerprint
 	settings["generator"] = "custom-splitmix64-v1"
 	settings["parameter_binding"] = "nullable text with typed SQL casts"
+	if run.Target == "oracle" {
+		settings["prepared_queries"] = "go-ora prepares each request"
+	}
 	emit(run, "metadata", metadata)
 	stages := []stage{{Clients: run.Clients, Seconds: run.Config.Duration}}
 	if run.Config.Plan != nil {
@@ -858,7 +868,7 @@ func benchmarkCustom(run *runCase, native *database) error {
 				var result map[string]any
 				result, err = measure(run, warm, make([]int64, run.Clients), &atomic.Int64{}, unit.Phase, run.Config.Warmup, stages[0].Clients, nil, nil, false)
 				if err == nil && result["errors"].(int64) > 0 {
-					err = fmt.Errorf("errors during custom warmup")
+					err = fmt.Errorf("errors during custom warmup: %v", result["errorExamples"])
 				}
 			}
 			closeCustomSessions(warm)

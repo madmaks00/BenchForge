@@ -73,6 +73,9 @@ impl Extended {
                 let mut connection =
                     oracle::Connection::connect(&ep.username, &ep.password, &address)?;
                 connection.set_autocommit(true);
+                if run.config.custom_workload.is_some() {
+                    connection.execute("ALTER SESSION SET NLS_NUMERIC_CHARACTERS = '.,'", &[])?;
+                }
                 Some(Sql::Oracle(connection))
             }
             "cockroachDb" => {

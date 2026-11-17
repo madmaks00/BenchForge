@@ -114,6 +114,8 @@ class SqlIO:
             self.c.call_timeout = (
                 run["config"]["customWorkload"].get("commandTimeoutSeconds", 10) * 1000
             )
+        if self.t == "oracle":
+            self.query("ALTER SESSION SET NLS_NUMERIC_CHARACTERS = '.,'")
         if self.t == "sqlite":
             self.c.execute("PRAGMA foreign_keys=ON")
 

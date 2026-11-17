@@ -201,6 +201,10 @@ class Sql {
     if (this.target === 'sqlite') this.raw.exec('PRAGMA foreign_keys=ON');
     this.transaction = undefined;
   }
+  async configure() {
+    if (this.target === 'oracle')
+      await this.execute("ALTER SESSION SET NLS_NUMERIC_CHARACTERS = '.,'");
+  }
   async execute(sql, params = [], mode = 'nonQuery', setup = false) {
     const target = this.target,
       read = mode !== 'nonQuery',
@@ -522,6 +526,7 @@ export async function benchmarkCustom(run, database, config, hooks) {
     byOperation: Object.create(null),
   };
   const sql = new Sql(database, run);
+  await sql.configure();
   async function checks(before) {
     for (const { definition, command } of p.checks) {
       if (!definition[before ? 'before' : 'after']) continue;

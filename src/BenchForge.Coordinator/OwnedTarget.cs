@@ -105,8 +105,10 @@ public sealed class OwnedTarget(TargetKind target, BenchmarkConfig config, strin
             {
                 if (target == TargetKind.Oracle)
                 {
-                    var health = await ProcessUtil.RunAsync(_docker, ["inspect", "--format", "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}", _container], token);
-                    if (health is not ("healthy" or "none")) { await Task.Delay(1000, token); continue; }
+                    var state = await ProcessUtil.RunAsync(_docker, ["inspect", "--format", "{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}", _container], token);
+                    if (!state.StartsWith("true ", StringComparison.Ordinal))
+                        throw new InvalidOperationException(info.Name + " остановилась при запуске.");
+                    if (state is not ("true healthy" or "true none")) { await Task.Delay(1000, token); continue; }
                 }
                 using var socket = new TcpClient();
                 await socket.ConnectAsync(Endpoint.Host, Endpoint.Port, token).AsTask().WaitAsync(TimeSpan.FromSeconds(2), token);

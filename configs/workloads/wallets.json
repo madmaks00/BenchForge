@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "Кошельки и переводы",
+  "description": "Транзакционный перевод с проверкой сохранения общей суммы.",
+  "mode": "mix",
+  "datasets": [{ "name": "wallets", "columns": [
+    { "name": "id", "primaryKey": true },
+    { "name": "balance", "generator": "constant", "constant": "10000" }
+  ] }],
+  "operations": [
+    { "id": "balance", "name": "Посмотреть баланс", "weight": 80, "steps": [
+      { "command": { "sql": "SELECT id,balance FROM wallets WHERE id=@key" }, "minRows": 1, "maxRows": 1 }
+    ] },
+    { "id": "transfer", "name": "Перевод между счетами", "weight": 20, "readOnly": false, "transaction": true, "steps": [
+      { "command": { "sql": "UPDATE wallets SET balance=balance-1 WHERE id=@key" }, "result": "nonQuery", "minRows": 1, "maxRows": 1 },
+      { "command": { "sql": "UPDATE wallets SET balance=balance+1 WHERE id=(@key % @baseRows)+1" }, "result": "nonQuery", "minRows": 1, "maxRows": 1 }
+    ] }
+  ],
+  "checks": [{ "name": "Сумма денег сохранилась", "command": { "sql": "SELECT SUM(balance)-COUNT(*)*10000 FROM wallets" }, "expected": "0" }]
+}

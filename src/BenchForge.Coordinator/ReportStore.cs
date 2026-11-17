@@ -41,6 +41,16 @@ public static class ReportStore
         }
         await File.WriteAllTextAsync(Path.Combine(folder, "results.csv"), csv.ToString(), new UTF8Encoding(true));
         await File.WriteAllTextAsync(Path.Combine(folder, "summary.json"), JsonSerializer.Serialize(report.Summary, Json.Pretty));
+        if (report.Config.CustomWorkload is not null)
+        {
+            var operations = new StringBuilder("engine,target,base_rows,clients,repeat,phase,stage_number,operation_id,operation_name,successful,rows_affected,errors,p50_ms,p95_ms,p99_ms,end_to_end_p99_ms,verified,cancelled\n");
+            foreach (var row in report.Results)
+            foreach (var detail in row.OperationBreakdown ?? [])
+                operations.AppendLine(string.Join(',', new object?[] { row.Engine, row.Target, row.DatasetRows, row.Clients, row.Repeat, row.Phase, row.Stage?.Number,
+                    detail.Id, detail.Name, detail.SuccessfulOperations, detail.SuccessfulRows, detail.Errors, detail.ServiceLatency.P50Ms, detail.ServiceLatency.P95Ms,
+                    detail.ServiceLatency.P99Ms, detail.EndToEndLatency.P99Ms, row.Verified, row.Cancelled }.Select(Value)));
+            await File.WriteAllTextAsync(Path.Combine(folder, "operations.csv"), operations.ToString(), new UTF8Encoding(true));
+        }
     }
     private static string Value(object? value)
     {

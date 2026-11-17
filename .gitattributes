@@ -4,3 +4,5 @@
 *.go text eol=lf
 *.rs text eol=lf
 *.java text eol=lf
+*.csv text eol=lf
+*.jsonl text eol=lf

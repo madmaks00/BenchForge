@@ -9,6 +9,15 @@
   <Folder Name="/tests/">
     <Project Path="tests/BenchForge.Tests/BenchForge.Tests.csproj" />
   </Folder>
+  <Folder Name="/workloads/">
+    <File Path="docs/custom-workloads.md" />
+    <File Path="configs/custom-sql-smoke.json" />
+    <File Path="configs/workloads/store.json" />
+    <File Path="configs/workloads/wallets.json" />
+    <File Path="configs/workloads/typed-columns.json" />
+    <File Path="configs/workloads/imported-products.json" />
+    <File Path="configs/workloads/data/products.csv" />
+  </Folder>
   <Folder Name="/server/">
     <File Path="server/Agent.Dockerfile" />
     <File Path="server/agentctl.sh" />

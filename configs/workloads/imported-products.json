@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "name": "Мои товары из CSV",
+  "mode": "mix",
+  "datasets": [{ "name": "products", "import": { "file": "data/products.csv", "format": "csv", "rows": 3, "sha256": "eff47d26ea647b62ce3bbfa2a9a01bb54c2a8643678a7f6cce519e04d42b76ef" }, "columns": [
+    { "name": "id", "primaryKey": true },
+    { "name": "title", "type": "text", "generator": "text" },
+    { "name": "price", "type": "decimal", "generator": "decimal" }
+  ] }],
+  "operations": [{ "id": "product", "name": "Карточка товара", "parameters": [{ "name": "id", "generator": "reference", "reference": "products" }],
+    "steps": [{ "command": { "sql": "SELECT id,title,price FROM products WHERE id=@id" }, "minRows": 1, "maxRows": 1 }] }],
+  "checks": [{ "name": "Количество товаров сохранилось", "command": { "sql": "SELECT COUNT(*) FROM products" }, "expected": "rows:products" }]
+}

@@ -65,6 +65,17 @@ public sealed class RemoteAgentClient(IRemoteTransport? transport = null)
         ValidateJob(job);
         var remote = info.Root + "/jobs/" + job;
         await _transport.RunAsync(server, "umask 077; mkdir -p -- " + PosixShell.Quote(remote), token);
+        if (WorkloadFiles.Imports(config).Any())
+        {
+            var inputs = Path.Combine(localFolder, "inputs.tar.gz");
+            try
+            {
+                await WorkloadFiles.CreateArchiveAsync(config, inputs, token);
+                await _transport.UploadAsync(server, inputs, remote + "/inputs.tar.gz", token);
+                await _transport.RunAsync(server, "set -eu; umask 077; mkdir -p -- " + PosixShell.Quote(remote + "/inputs") + "; tar -xzf " + PosixShell.Quote(remote + "/inputs.tar.gz") + " -C " + PosixShell.Quote(remote + "/inputs") + "; rm -- " + PosixShell.Quote(remote + "/inputs.tar.gz"), token, 600);
+            }
+            finally { File.Delete(inputs); }
+        }
         var path = Path.Combine(localFolder, "server-config.json.tmp");
         try
         {

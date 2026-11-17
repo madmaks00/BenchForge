@@ -4,7 +4,7 @@ using BenchForge.Worker.CSharp.Databases;
 
 namespace BenchForge.Worker.CSharp;
 
-public sealed class BenchmarkEngine(RunCase run, ProtocolWriter writer)
+public sealed partial class BenchmarkEngine(RunCase run, ProtocolWriter writer)
 {
     private readonly BenchmarkConfig _config = run.Config;
     private Task Emit(string type, object value) => writer.EmitAsync(type, run.RunId, value);
@@ -12,6 +12,7 @@ public sealed class BenchmarkEngine(RunCase run, ProtocolWriter writer)
 
     public async Task RunAsync(CancellationToken token)
     {
+        if (_config.CustomWorkload is not null) { await RunCustomAsync(token); return; }
         await using var database = await OpenReadyAsync(token);
         var metadata = await database.MetadataAsync(token);
         metadata.Settings["server_gc"] = System.Runtime.GCSettings.IsServerGC.ToString();
@@ -138,6 +139,7 @@ public sealed class BenchmarkEngine(RunCase run, ProtocolWriter writer)
         public readonly LatencyHistogram EndToEnd = new();
         public readonly LatencyHistogram Failed = new();
         public readonly Dictionary<string, long> ErrorExamples = [];
+        public readonly Dictionary<string, Counters> Operations = [];
     }
 
     private sealed class SessionPool(int capacity) : IAsyncDisposable
@@ -172,7 +174,7 @@ public sealed class BenchmarkEngine(RunCase run, ProtocolWriter writer)
     }
 
     private async Task<PhaseResult> MeasureWindowAsync(SessionPool sessions, Scenario scenario, int clients, double seconds, int? targetRate,
-        LoadStageResult? stage, CancellationToken token, bool progress)
+        LoadStageResult? stage, CancellationToken token, bool progress, string? phaseName = null)
     {
         ThreadPool.GetMinThreads(out var workerThreads, out var ioThreads);
         if (run.Target == TargetKind.Sqlite) ThreadPool.SetMinThreads(Math.Max(workerThreads, Math.Min(252, clients) + 4), ioThreads);
@@ -230,14 +232,25 @@ public sealed class BenchmarkEngine(RunCase run, ProtocolWriter writer)
                 var stopAfterError = false;
                 try
                 {
-                    var affected = await sessions.Sessions[index]!.ExecuteAsync(operation, key, row, batch, CancellationToken.None);
+                    var affected = await sessions.Sessions[index]!.ExecuteAsync(operation, key, row, batch, sessions.Sessions[index] is ICustomSqlSession ? token : CancellationToken.None);
                     var finish = Stopwatch.GetTimestamp();
                     c.Success++; c.Rows += affected; c.Service.RecordTicks(finish - before);
                     c.EndToEnd.RecordTicks(finish - (constant ? scheduled : before));
+                    if (sessions.Sessions[index] is ICustomSqlSession custom)
+                    {
+                        if (!c.Operations.TryGetValue(custom.LastOperation, out var detail)) c.Operations[custom.LastOperation] = detail = new();
+                        detail.Success++; detail.Rows += affected; detail.Service.RecordTicks(finish - before); detail.EndToEnd.RecordTicks(finish - (constant ? scheduled : before));
+                    }
                 }
+                catch (OperationCanceledException) when (token.IsCancellationRequested && sessions.Sessions[index] is ICustomSqlSession) { break; }
                 catch (Exception exception)
                 {
                     c.Errors++; c.Failed.RecordTicks(Stopwatch.GetTimestamp() - before);
+                    if (sessions.Sessions[index] is ICustomSqlSession custom)
+                    {
+                        if (!c.Operations.TryGetValue(custom.LastOperation, out var detail)) c.Operations[custom.LastOperation] = detail = new();
+                        detail.Errors++;
+                    }
                     var error = exception.GetType().Name + ": " + exception.Message;
                     if (!string.IsNullOrEmpty(run.Endpoint.Password)) error = error.Replace(run.Endpoint.Password, "[redacted]");
                     error = error[..Math.Min(error.Length, 250)];
@@ -271,7 +284,7 @@ public sealed class BenchmarkEngine(RunCase run, ProtocolWriter writer)
                     await Task.Delay(250, monitorCancellation.Token); process.Refresh(); sampledRss = Math.Max(sampledRss, process.WorkingSet64 / 1048576.0);
                     if (progress && Stopwatch.GetTimestamp() >= reportAt)
                     {
-                        await Emit("progress", new { phase = scenario.ToString(), stage = stage?.Name, targetSeconds = seconds, clients, successful = counters.Sum(c => Interlocked.Read(ref c.Success)),
+                        await Emit("progress", new { phase = phaseName ?? scenario.ToString(), stage = stage?.Name, targetSeconds = seconds, clients, successful = counters.Sum(c => Interlocked.Read(ref c.Success)),
                             errors = counters.Sum(c => Interlocked.Read(ref c.Errors)), elapsedSeconds = Stopwatch.GetElapsedTime(start).TotalSeconds });
                         reportAt = Stopwatch.GetTimestamp() + Stopwatch.Frequency;
                     }
@@ -293,7 +306,14 @@ public sealed class BenchmarkEngine(RunCase run, ProtocolWriter writer)
         var successful = counters.Sum(c => c.Success); var errors = counters.Sum(c => c.Errors); var dropped = counters.Sum(c => c.Dropped);
         var affectedRows = counters.Sum(c => c.Rows);
         var writes = scenario is Scenario.Insert or Scenario.BatchInsert or Scenario.Update or Scenario.Delete;
-        return Base(scenario.ToString()) with
+        var breakdown = _config.CustomWorkload is null ? null : counters.SelectMany(counter => counter.Operations).GroupBy(pair => pair.Key).Select(group =>
+        {
+            var latency = new LatencyHistogram(); var endLatency = new LatencyHistogram();
+            foreach (var pair in group) { latency.Merge(pair.Value.Service); endLatency.Merge(pair.Value.EndToEnd); }
+            return new WorkloadOperationResult(group.Key, _config.CustomWorkload.Operations.Single(operation => operation.Id == group.Key).Name,
+                group.Sum(pair => pair.Value.Success), group.Sum(pair => pair.Value.Rows), group.Sum(pair => pair.Value.Errors), latency.Snapshot(), endLatency.Snapshot());
+        }).ToList();
+        return Base(phaseName ?? scenario.ToString()) with
         {
             Stage = stage, Clients = clients,
             Unit = scenario == Scenario.BatchInsert ? "rows/s" : "ops/s", ElapsedSeconds = elapsed, SuccessfulOperations = successful,
@@ -302,7 +322,7 @@ public sealed class BenchmarkEngine(RunCase run, ProtocolWriter writer)
             OperationsPerSecond = successful / elapsed, RowsPerSecond = writes ? affectedRows / elapsed : null,
             ServiceLatency = service.Snapshot(), EndToEndLatency = endToEnd.Snapshot(), ErrorLatency = failed.Snapshot(), Client = client,
             ErrorExamples = counters.SelectMany(c => c.ErrorExamples).GroupBy(k => k.Key).OrderByDescending(g => g.Sum(x => x.Value)).Take(8).ToDictionary(g => g.Key, g => g.Sum(x => x.Value)),
-            Cancelled = token.IsCancellationRequested
+            Cancelled = token.IsCancellationRequested, OperationBreakdown = breakdown
         };
     }
 }

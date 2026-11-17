@@ -90,7 +90,7 @@ case "$action" in
     count=$(printf '%s\n' "$report" | wc -l)
     [ "$count" -eq 1 ] || fail 'Ambiguous report directory'
     report_dir=$(dirname "$report")
-    (cd "$report_dir"; set -- report.json; for file in results.csv summary.json resources-*.json; do [ ! -f "$file" ] || set -- "$@" "$file"; done; tar -czf "$dir/report.tar.gz" -- "$@")
+    (cd "$report_dir"; set -- report.json; for file in results.csv summary.json operations.csv resources-*.json; do [ ! -f "$file" ] || set -- "$@" "$file"; done; tar -czf "$dir/report.tar.gz" -- "$@")
     sha256sum "$dir/report.tar.gz"
     ;;
   cleanup)
@@ -106,6 +106,8 @@ case "$action" in
         docker rm --force --volumes "$container" >/dev/null
     done
     if [ -f "$root/active" ] && [ "$(cat "$root/active")" = "$job" ]; then rm -f -- "$root/active"; fi
+    rm -rf -- "$dir/inputs"
+    rm -f -- "$dir/inputs.tar.gz"
     ;;
   *) fail 'Unknown agent action' ;;
 esac

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "Типы полей и генераторы",
+  "description": "Строки Unicode, UUID, UTC-даты, числа, выбор из списка и NULL.",
+  "datasets": [{ "name": "items", "columns": [
+    { "name": "id", "primaryKey": true },
+    { "name": "title", "type": "text", "generator": "text", "prefix": "Товар-{row}-", "length": 24 },
+    { "name": "code", "type": "guid", "generator": "guid", "unique": true },
+    { "name": "created_at", "type": "dateTime", "generator": "timestamp", "min": 1704067200, "max": 1735689599 },
+    { "name": "price", "type": "decimal", "generator": "decimal", "min": 0, "max": 99999.99, "scale": 2 },
+    { "name": "active", "type": "boolean", "generator": "boolean" },
+    { "name": "category", "type": "text", "generator": "choice", "choices": ["Ноутбуки", "Мониторы", "Аксессуары"] },
+    { "name": "note", "type": "text", "generator": "text", "nullable": true, "nullPercent": 50, "length": 128 }
+  ] }],
+  "operations": [{ "id": "read", "name": "Прочитать все типы полей", "steps": [
+    { "command": { "sql": "SELECT id,title,code,created_at,price,active,category,note FROM items WHERE id=@key" }, "minRows": 1, "maxRows": 1 }
+  ] }, { "id": "by_code", "name": "Найти по реальному UUID", "parameters": [{ "name": "code", "type": "guid", "generator": "sample", "reference": "items", "sampleColumn": "code", "sampleSize": 10000 }],
+    "steps": [{ "command": { "sql": "SELECT id,title FROM items WHERE code=@code" }, "minRows": 1, "maxRows": 1 }] }],
+  "checks": [{ "name": "Число записей", "command": { "sql": "SELECT COUNT(*) FROM items" }, "expected": "rows:items" }]
+}

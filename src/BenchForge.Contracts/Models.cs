@@ -73,6 +73,9 @@ public sealed record BenchmarkConfig
     public VirtualMachineOptions? VirtualMachine { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RemoteServerOptions? RemoteServer { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SqlWorkload? CustomWorkload { get; init; }
+    [JsonIgnore] public string? WorkloadDirectory { get; init; }
 
     public void Validate()
     {
@@ -91,6 +94,7 @@ public sealed record BenchmarkConfig
         if (Clients.Count == 0 || Clients.Count > 16 || Clients.Distinct().Count() != Clients.Count || Clients.Any(n => n < 1))
             throw new ArgumentException("Число клиентов: положительные целые числа без повторов (до 16 значений).");
         Plan?.Validate();
+        CustomWorkload?.Validate(this);
         if (Scenarios.Any(s => !Enum.IsDefined(s)) || Scenarios.Distinct().Count() != Scenarios.Count)
             throw new ArgumentException("Неизвестный или повторяющийся сценарий.");
         if (Repeats is < 1 or > 20 || PayloadBytes is < 16 or > 65_536 || BatchSize is < 1 or > 10_000)
@@ -119,7 +123,7 @@ public sealed record BenchmarkConfig
 
 // Sent only through the private control pipe, never written to a benchmark report.
 public sealed record Endpoint(string Host, int Port, string Username, string Password, string Database, string? FilePath = null);
-public sealed record RunCase(string RunId, TargetKind Target, long Rows, int Clients, int Repeat, BenchmarkConfig Config, Endpoint Endpoint, string Engine = "csharp");
+public sealed record RunCase(string RunId, TargetKind Target, long Rows, int Clients, int Repeat, BenchmarkConfig Config, Endpoint Endpoint, string Engine = "csharp", string? InputDirectory = null);
 public sealed record WorkerCommand(int ProtocolVersion, string Type, RunCase? Run = null);
 public sealed record WireEvent(int ProtocolVersion, string Type, string RunId, JsonElement Data);
 
@@ -166,6 +170,7 @@ public sealed record PhaseResult
     public HistogramData? ErrorLatency { get; init; }
     public ClientMetrics? Client { get; init; }
     public ServerMetrics? Server { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public List<WorkloadOperationResult>? OperationBreakdown { get; init; }
 }
 
 public sealed record SummaryRow(string Engine, TargetKind Target, long DatasetRows, int Clients, string Phase, string Unit,

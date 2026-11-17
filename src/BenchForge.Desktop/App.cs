@@ -20,7 +20,13 @@ public sealed class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var window = new MainWindow(); desktop.MainWindow = window;
-            if (desktop.Args?.Contains("--ui-smoke") == true)
+            if (desktop.Args?.Contains("--ui-workload-smoke") == true)
+                window.Opened += async (_, _) =>
+                {
+                    try { await window.VerifyWorkloadAsync(); desktop.Shutdown(0); }
+                    catch (Exception e) { Console.Error.WriteLine(e); desktop.Shutdown(1); }
+                };
+            else if (desktop.Args?.Contains("--ui-smoke") == true)
                 window.Opened += async (_, _) =>
                 {
                     try { await window.VerifyUiAsync(); desktop.Shutdown(0); }

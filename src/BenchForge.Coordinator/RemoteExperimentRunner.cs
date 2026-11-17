@@ -203,7 +203,8 @@ public sealed class RemoteExperimentRunner(RemoteAgentClient? client = null, Rem
     {
         if (!config.EngineIds.Contains(row.Engine) || !config.Targets.Contains(row.Target) || !config.DatasetRows.Contains(row.DatasetRows) || row.Repeat < 1 || row.Repeat > config.Repeats)
             throw new InvalidDataException("Сервер вернул измерения другого задания.");
-        if (!ReportAnalysis.SetupPhase(row.Phase) && (!Enum.TryParse<Scenario>(row.Phase, out var scenario) || !config.Operations(row.Target).Contains(scenario)))
+        if (config.CustomWorkload is { } workload ? !WorkloadPhases.All(workload).Contains(row.Phase) :
+            row.Phase is not ("bulk_load" or "index_build") && (!Enum.TryParse<Scenario>(row.Phase, out var scenario) || !config.Operations(row.Target).Contains(scenario)))
             throw new InvalidDataException("Неизвестная операция серверного измерения.");
         if (config.Plan is { } plan && !ReportAnalysis.SetupPhase(row.Phase))
         {
@@ -225,7 +226,7 @@ public sealed class RemoteExperimentRunner(RemoteAgentClient? client = null, Rem
         {
             var name = entry.Name;
             if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile) || Path.GetFileName(name) != name || name.Contains('\\') ||
-                !(name is "report.json" or "results.csv" or "summary.json" || name.StartsWith("resources-", StringComparison.Ordinal) && name.EndsWith(".json", StringComparison.Ordinal)))
+                !(name is "report.json" or "results.csv" or "summary.json" or "operations.csv" || name.StartsWith("resources-", StringComparison.Ordinal) && name.EndsWith(".json", StringComparison.Ordinal)))
                 throw new InvalidDataException("Неожиданный файл в серверном отчёте.");
             total += entry.Length;
             if (total > 2L * 1024 * 1024 * 1024) throw new InvalidDataException("Слишком большой распакованный отчёт.");

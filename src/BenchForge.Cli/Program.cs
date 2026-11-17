@@ -41,10 +41,15 @@ try
     }
     if (args.Contains("--targets")) { Console.WriteLine(JsonSerializer.Serialize(Catalog.Targets, Json.Pretty)); return 0; }
     var configIndex = Array.IndexOf(args, "--config");
+    async Task<BenchmarkConfig> ReadConfigAsync(string path)
+    {
+        var value = JsonSerializer.Deserialize<BenchmarkConfig>(await File.ReadAllTextAsync(path), Json.Options) ?? throw new InvalidDataException("Пустая конфигурация.");
+        return value with { WorkloadDirectory = Path.GetDirectoryName(Path.GetFullPath(path)) };
+    }
     if (args.Contains("--prepare-server"))
     {
         if (configIndex < 0 || configIndex + 1 >= args.Length) throw new ArgumentException("Укажите --config с настройками remoteServer.");
-        var preparation = JsonSerializer.Deserialize<BenchmarkConfig>(await File.ReadAllTextAsync(args[configIndex + 1]), Json.Options)!;
+        var preparation = await ReadConfigAsync(args[configIndex + 1]);
         preparation.Validate();
         await new RemoteAgentClient().PrepareAsync(preparation.RemoteServer ?? throw new ArgumentException("Не указан remoteServer."), preparation.EngineIds, Console.WriteLine, cancellation.Token);
         return 0;
@@ -52,7 +57,7 @@ try
     if (args.Contains("--prepare-vm"))
     {
         var preparation = configIndex >= 0 && configIndex + 1 < args.Length
-            ? JsonSerializer.Deserialize<BenchmarkConfig>(await File.ReadAllTextAsync(args[configIndex + 1]), Json.Options)!
+            ? await ReadConfigAsync(args[configIndex + 1])
             : new BenchmarkConfig { VirtualMachine = new(), Targets = Catalog.Targets.Select(target => target.Kind).ToList() };
         await new VirtualMachineTemplate().PrepareAsync(preparation.VirtualMachine ?? new(),
             preparation.Targets.Where(target => target != TargetKind.Sqlite).Select(preparation.Image), Console.WriteLine, cancellation.Token);
@@ -60,11 +65,21 @@ try
     }
     BenchmarkConfig config;
     if (args.Contains("--smoke")) config = new() { Targets = [TargetKind.Sqlite], DatasetRows = [1000], Clients = [1, 2], Repeats = 1, DurationSeconds = .2, WarmupSeconds = .1, BatchSize = 100 };
-    else if (configIndex >= 0 && configIndex + 1 < args.Length) config = JsonSerializer.Deserialize<BenchmarkConfig>(await File.ReadAllTextAsync(args[configIndex + 1]), Json.Options)!;
+    else if (configIndex >= 0 && configIndex + 1 < args.Length) config = await ReadConfigAsync(args[configIndex + 1]);
+    else if (args.Contains("--workload")) config = new();
     else
     {
-        Console.WriteLine("BenchForge · native language engines\n--smoke                  Проверка SQLite без Docker\n--config <file.json>      Эксперимент из конфигурации\n--check --config <file>   Проверка готовности\n--prepare-vm             Подготовка шаблона чистой VM\n--prepare-workers        Подготовить движки на этом компьютере\n--prepare-server --config FILE  Подготовить Linux-сервер по SSH\n--resume-server --config FILE   Получить текущее задание сервера\n--languages <ids>        Языки: csharp,java,python,rust,node,go\n--targets / --engines     Поддерживаемые базы и движки\n--reports <directory>     Папка отчётов"); return 0;
+        Console.WriteLine("BenchForge · native language engines\n--smoke                  Проверка SQLite без Docker\n--config <file.json>      Эксперимент из конфигурации\n--workload <file>         Свой SQL-сценарий JSON или .bfworkload\n--check --config <file>   Проверка готовности\n--prepare-vm             Подготовка шаблона чистой VM\n--prepare-workers        Подготовить движки на этом компьютере\n--prepare-server --config FILE  Подготовить Linux-сервер по SSH\n--resume-server --config FILE   Получить текущее задание сервера\n--languages <ids>        Языки: csharp,java,python,rust,node,go\n--targets / --engines     Поддерживаемые базы и движки\n--reports <directory>     Папка отчётов"); return 0;
     }
+    var workloadIndex = Array.IndexOf(args, "--workload");
+    if (workloadIndex >= 0)
+    {
+        if (workloadIndex + 1 >= args.Length) throw new ArgumentException("После --workload укажите .bfworkload или JSON-сценарий.");
+        var loaded = await WorkloadFiles.OpenAsync(args[workloadIndex + 1], cancellation.Token);
+        config = config with { CustomWorkload = loaded.Workload, WorkloadDirectory = loaded.Directory };
+    }
+    var inputIndex = Array.IndexOf(args, "--workload-inputs");
+    if (inputIndex >= 0 && inputIndex + 1 < args.Length) config = config with { WorkloadDirectory = Path.GetFullPath(args[inputIndex + 1]) };
     config.Validate();
     if (args.Contains("--resume-server"))
     {

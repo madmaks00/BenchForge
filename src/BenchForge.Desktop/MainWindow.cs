@@ -37,6 +37,7 @@ public sealed class MainWindow : Window
     private Task? _active;
     private string? _runFolder, _reportFolder;
     private bool _running, _closing;
+    private SqlWorkload? _activeWorkload;
     private int _selected;
 
     public MainWindow()
@@ -178,6 +179,7 @@ public sealed class MainWindow : Window
         _cancellation?.Dispose();
         var cancellation = new CancellationTokenSource();
         _cancellation = cancellation; _running = true; _lastRun = null; _runFolder = null;
+        _activeWorkload = config.CustomWorkload;
         _setup.SetBusy(true); _nav[0].IsEnabled = false; _run.Begin(config); _nav[1].Content = "Выполнение  ·"; Navigate(1);
         Action<RunUpdate> changed = update => Dispatcher.UIThread.Post(() => { if (_cancellation == cancellation && _running) Receive(update); });
         var runner = new ExperimentRunner(changed);
@@ -204,8 +206,8 @@ public sealed class MainWindow : Window
             case "log":
                 _run.Log(update.Message);
                 var operation = update.Message.Split(" · ").LastOrDefault();
-                if (operation is not null && ReportAnalysis.KnownPhases.Contains(operation))
-                    _run.Status(ReportAnalysis.PhaseName(operation), update.Message[..^(operation.Length + 3)]);
+                if (operation is not null && (ReportAnalysis.KnownPhases.Contains(operation) || operation.StartsWith("custom/", StringComparison.Ordinal)))
+                    _run.Status(ReportAnalysis.PhaseName(operation, _activeWorkload), update.Message[..^(operation.Length + 3)]);
                 else if (update.Message.Contains(" · повтор ")) _run.Status("Подготовка запуска", update.Message);
                 break;
             case "started": _runFolder = update.Folder; _run.Cases(0, update.TotalCases); break;
@@ -218,7 +220,7 @@ public sealed class MainWindow : Window
                     if (data.TryGetProperty("loaded", out var loaded)) _run.Status("Подготовка данных", $"{loaded.GetInt64():N0} / {data.GetProperty("total").GetInt64():N0} записей");
                     else
                     {
-                        var operationName = ReportAnalysis.PhaseName(data.GetProperty("phase").GetString()!);
+                        var operationName = ReportAnalysis.PhaseName(data.GetProperty("phase").GetString()!, _activeWorkload);
                         var detail = $"{data.GetProperty("elapsedSeconds").GetDouble():N1} с · успешных операций: {data.GetProperty("successful").GetInt64():N0}";
                         if (data.TryGetProperty("stage", out var stage) && stage.ValueKind == JsonValueKind.String)
                             detail = $"{stage.GetString()} · клиентов: {data.GetProperty("clients").GetInt32()} · {detail}";
@@ -260,7 +262,13 @@ public sealed class MainWindow : Window
         try
         {
             var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions { Title = "Сохранить настройки", SuggestedFileName = "experiment.json", DefaultExtension = "json" });
-            if (file is null) return; await using var stream = await file.OpenWriteAsync(); stream.SetLength(0); await JsonSerializer.SerializeAsync(stream, config, Json.Pretty);
+            if (file is null) return;
+            if (WorkloadFiles.Imports(config).Any())
+            {
+                var destination = file.TryGetLocalPath() ?? throw new IOException("Для настроек с файлами выберите локальную папку.");
+                await WorkloadFiles.CopyInputsAsync(config, Path.GetDirectoryName(destination)!, CancellationToken.None);
+            }
+            await using var stream = await file.OpenWriteAsync(); stream.SetLength(0); await JsonSerializer.SerializeAsync(stream, config, Json.Pretty);
             Notice("Настройки сохранены.");
         }
         catch (Exception e) { Notice(e.Message); }
@@ -295,6 +303,25 @@ public sealed class MainWindow : Window
         ShowReport(_lastRun, _runFolder); await Task.Delay(350);
         if (_dashboard.DisplayedResultCount != 5) throw new InvalidOperationException("UI lost results");
         if (Environment.GetEnvironmentVariable("DBLAB_SCREENSHOT") is { } screenshot) Capture(screenshot);
+    }
+    public async Task VerifyWorkloadAsync()
+    {
+        var workload = WorkloadTemplates.Store();
+        var config = new BenchmarkConfig { CustomWorkload = workload, Targets = [TargetKind.Sqlite], DatasetRows = [100], Clients = [2], Repeats = 1,
+            WarmupSeconds = 0, BatchSize = 50, Plan = LoadPlan.Spike(1, 2, .1, .1, .1) };
+        _setup.SetConfig(config); _setup.GoTo(1);
+        if (_setup.ReadConfig().CustomWorkload?.Fingerprint != workload.Fingerprint) throw new InvalidOperationException("Setup lost the custom workload");
+        var screenshots = Environment.GetEnvironmentVariable("DBLAB_SCREENSHOT") is { } output ? Path.GetDirectoryName(output)! : Path.GetTempPath();
+        var editor = new WorkloadEditorWindow(workload, null); editor.Show(this); await Task.Delay(200);
+        try { await editor.VerifyPagesAsync(screenshots); } finally { editor.Close(); }
+        foreach (var dialog in new[] { WorkloadForm.ValueDialog(workload.Datasets[0].Columns[1], false), WorkloadForm.StepDialog(workload.Operations[2].Steps[0]), WorkloadForm.CheckDialog(workload.Checks[0]) })
+        { dialog.Show(this); await Task.Delay(150); dialog.Close(); }
+        _setup.GoTo(2); await StartAsync(_setup.ReadConfig());
+        if (_lastRun?.Status != "completed" || _lastRun.Results.Where(row => row.Phase == WorkloadPhases.Mix).Count() != 3) throw new InvalidOperationException("Custom UI run failed: " + _lastRun?.Status);
+        ShowReport(_lastRun, _runFolder); await Task.Delay(200);
+        if (_dashboard.DisplayedResultCount != _lastRun.Results.Count) throw new InvalidOperationException("Custom report lost measurements");
+        if (Environment.GetEnvironmentVariable("DBLAB_SCREENSHOT") is { } screenshot) Capture(screenshot);
+        await File.WriteAllTextAsync(Path.Combine(screenshots, "custom-ui-result.json"), JsonSerializer.Serialize(new { status = _lastRun.Status, folder = _runFolder, results = _lastRun.Results.Count }, Json.Pretty));
     }
     public async Task VerifyCancelAsync()
     {

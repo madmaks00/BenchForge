@@ -14,6 +14,7 @@ internal sealed class EngineSettings : UserControl
     private readonly TextBlock _status = Ui.Label("C# выбран по умолчанию. Для остальных языков один раз подготовьте зависимости.", 13);
     private CancellationTokenSource? _preparing;
     private Button? _prepareButton, _checkButton;
+    private bool _remoteMode, _customMode;
     public EngineSettings()
     {
         var choices = new WrapPanel { Orientation = Orientation.Horizontal };
@@ -63,9 +64,20 @@ internal sealed class EngineSettings : UserControl
     { var values = selected.ToHashSet(); foreach (var (id, choice) in _choices) choice.IsChecked = values.Contains(id); }
     public void SetRemoteMode(bool remote)
     {
-        if (_prepareButton is not null) _prepareButton.IsVisible = !remote;
-        if (_checkButton is not null) _checkButton.IsVisible = !remote;
-        _status.Text = remote ? "Выбранные движки подготавливаются на Linux-сервере в разделе «Окружение тестирования». Устанавливать их на этот ПК не требуется."
+        _remoteMode = remote; UpdateMode();
+    }
+    public void SetCustomMode(bool custom)
+    {
+        _customMode = custom;
+        foreach (var (id, choice) in _choices) choice.IsEnabled = !custom || id == "csharp";
+        if (custom) Apply(["csharp"]); UpdateMode();
+    }
+    private void UpdateMode()
+    {
+        if (_prepareButton is not null) _prepareButton.IsVisible = !_remoteMode && !_customMode;
+        if (_checkButton is not null) _checkButton.IsVisible = !_remoteMode && !_customMode;
+        _status.Text = _customMode ? "Свой SQL-сценарий выполняется движком C#. Остальные языки доступны в стандартных тестах."
+            : _remoteMode ? "Выбранные движки подготавливаются на Linux-сервере в разделе «Окружение тестирования». Устанавливать их на этот ПК не требуется."
             : "C# готов после сборки. Остальные движки можно подготовить на этом компьютере.";
     }
     private void Append(string message) => Dispatcher.UIThread.Post(() =>

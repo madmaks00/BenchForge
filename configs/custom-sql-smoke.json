@@ -1,0 +1,10 @@
+{
+  "engines": ["csharp"],
+  "targets": ["sqlite"],
+  "datasetRows": [100],
+  "clients": [1, 2],
+  "repeats": 1,
+  "durationSeconds": 1,
+  "warmupSeconds": 0.2,
+  "batchSize": 50
+}

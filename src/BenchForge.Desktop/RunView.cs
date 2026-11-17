@@ -29,6 +29,7 @@ public sealed class RunView : UserControl
     private DateTimeOffset _started;
     private long _errorCount;
     private bool _stopping;
+    private SqlWorkload? _workload;
     private readonly Queue<PhaseResult> _latest = [];
     public event Action? StopRequested;
     public event Action? ResultsRequested;
@@ -50,6 +51,7 @@ public sealed class RunView : UserControl
     }
     public void Begin(BenchmarkConfig config)
     {
+        _workload = config.CustomWorkload;
         _title.Text = "Подготовка эксперимента"; _subtitle.Text = string.Join(" · ", config.Targets.Select(t => Catalog.Get(t).Name)) + " · " + string.Join(" / ", config.EngineIds.Select(Engines.Name));
         if (config.RemoteServer is { } server) _subtitle.Text = "Сервер: " + server.DisplayName + " · " + _subtitle.Text;
         _journal.Text = ""; _latest.Clear(); _recent.Children.Clear(); _errorCount = 0; _errors.Text = "0";
@@ -73,7 +75,7 @@ public sealed class RunView : UserControl
         {
             var line = new Grid { ColumnDefinitions = new ColumnDefinitions("150,*,180,105"), Margin = new Thickness(0, 12) };
             line.Children.Add(Ui.Label(Catalog.Get(result.Target).Name + " · " + Engines.Name(result.Engine), 13, Ui.Text));
-            var phase = Ui.Label(ReportAnalysis.PhaseName(result.Phase) + (result.Stage is { } stage ? " · " + stage.Name : ""));
+            var phase = Ui.Label(ReportAnalysis.PhaseName(result.Phase, _workload) + (result.Stage is { } stage ? " · " + stage.Name : ""));
             Grid.SetColumn(phase, 1); line.Children.Add(phase);
             var rate = Ui.Label(ReportAnalysis.Number(ReportAnalysis.Rate(result), ReportAnalysis.RateUnit(result.Phase)), 14, Ui.Text); Grid.SetColumn(rate, 2); line.Children.Add(rate);
             var status = Ui.Label(result.Cancelled ? "Остановлен" : ReportAnalysis.Valid(result) ? "Проверен" : "С ошибкой", 12, ReportAnalysis.Valid(result) ? Ui.Green : Ui.Amber);

@@ -140,6 +140,20 @@ public sealed class RemoteServerTests
         Assert.Equal(1, fake.Cleanups);
     }
 
+    [Fact]
+    public async Task CustomScenarioTransfersInputFilesAndAcceptsItsOwnPhaseNames()
+    {
+        using var folder = new Folder();
+        var input = folder.Path + "/items.csv"; await File.WriteAllTextAsync(input, "id,title\n1,example\n");
+        var inspected = await WorkloadFiles.InspectAsync(input, ImportFormat.Csv, CancellationToken.None);
+        var workload = WorkloadTemplates.Blank(); workload = workload with { Datasets = [workload.Datasets[0] with { Import = new("items.csv", ImportFormat.Csv, inspected.Sha256, 1) }] };
+        var fake = new FakeTransport(folder.Path);
+        var config = Config with { CustomWorkload = workload, WorkloadDirectory = folder.Path };
+        var result = await new RemoteExperimentRunner(new(fake), new(folder.Path + "/tickets")).RunAsync(config, folder.Path + "/reports", null, CancellationToken.None);
+        Assert.Equal("completed", result.Report.Status); Assert.Equal(1, fake.InputArchives); Assert.Equal(WorkloadPhases.Mix, Assert.Single(result.Report.Results).Phase);
+        Assert.True(File.Exists(result.Folder + "/operations.csv"));
+    }
+
     private sealed class FakeRunner : IRemoteExperimentRunner
     {
         public int Checks, Runs;
@@ -150,15 +164,15 @@ public sealed class RemoteServerTests
 
     private sealed class FakeTransport(string folder) : IRemoteTransport
     {
-        public int Starts, Cancels, Cleanups;
+        public int Starts, Cancels, Cleanups, InputArchives;
         public bool LoseConnection, BadChecksum, BadConfig, UnsafeEntry, MissingReport;
         public CancellationTokenSource? CancelDuringStart;
         public BenchmarkConfig? UploadedConfig;
         private string _job = "", _archive = "";
         private PhaseResult Row => new() { Target = TargetKind.Sqlite, DatasetRows = 100, Clients = 1, Repeat = 1,
-            Phase = nameof(Scenario.PointRead), Verified = true, ElapsedSeconds = .1, SuccessfulOperations = 10, OperationsPerSecond = 100, Server = new(42, 1, 0, 0, 1) };
+            Phase = UploadedConfig?.CustomWorkload is null ? nameof(Scenario.PointRead) : WorkloadPhases.Mix, Verified = true, ElapsedSeconds = .1, SuccessfulOperations = 10, OperationsPerSecond = 100, Server = new(42, 1, 0, 0, 1) };
         public Task UploadAsync(RemoteServerOptions server, string localFile, string remoteFile, CancellationToken token)
-        { UploadedConfig = JsonSerializer.Deserialize<BenchmarkConfig>(File.ReadAllText(localFile), Json.Options); _job = remoteFile.Split('/')[^2]; return Task.CompletedTask; }
+        { if (remoteFile.EndsWith("inputs.tar.gz")) { InputArchives++; Assert.True(new FileInfo(localFile).Length > 0); } else { UploadedConfig = JsonSerializer.Deserialize<BenchmarkConfig>(File.ReadAllText(localFile), Json.Options); _job = remoteFile.Split('/')[^2]; } return Task.CompletedTask; }
         public Task DownloadAsync(RemoteServerOptions server, string remoteFile, string localFile, CancellationToken token)
         { File.Copy(_archive, localFile, true); return Task.CompletedTask; }
         public async Task FollowAsync(RemoteServerOptions server, string command, Func<string, Task> receive, CancellationToken token)

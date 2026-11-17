@@ -21,6 +21,8 @@
 
 ## Как проходит запуск теста
 
+Собственные SQL-сценарии описаны в `SqlWorkload.cs`. `WorkloadTemplates.cs` содержит готовые примеры, `WorkloadData.cs` — значения и чтение CSV/JSONL, `SqlWorkloadText.cs` — создание схемы и поиск параметров. `CustomSqlDatabase.cs` выполняет команды и транзакции, `CustomBenchmarkEngine.cs` применяет к ним существующий измеритель нагрузки. `WorkloadFiles.cs` проверяет файлы и собирает переносимые пакеты; `WorkloadEditorWindow.cs` и `WorkloadEditors.cs` содержат визуальный редактор. [Руководство](custom-workloads.md).
+
 1. Пользователь нажимает «Начать эксперимент» в Desktop.
 2. Desktop собирает настройки и вызывает Coordinator.
 3. Coordinator создаёт временный экземпляр СУБД, запускает отдельную программу Worker.CSharp и передаёт ей сценарий.

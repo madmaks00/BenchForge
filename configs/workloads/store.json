@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "name": "Интернет-магазин",
+  "description": "Покупатели, товары, заказы и позиции. Чтение карточки, история заказов и создание заказа в транзакции.",
+  "mode": "mix",
+  "datasets": [
+    { "name": "customers", "columns": [
+      { "name": "id", "primaryKey": true },
+      { "name": "email", "type": "text", "generator": "text", "prefix": "customer-{row}@example.test", "length": 0, "unique": true },
+      { "name": "name", "type": "text", "generator": "text", "length": 24 }
+    ] },
+    { "name": "products", "fixedRows": 100, "columns": [
+      { "name": "id", "primaryKey": true },
+      { "name": "title", "type": "text", "generator": "text", "length": 48 },
+      { "name": "price", "type": "decimal", "generator": "decimal", "min": 10, "max": 10000, "scale": 2 }
+    ] },
+    { "name": "orders", "rowsMultiplier": 2, "columns": [
+      { "name": "id", "primaryKey": true },
+      { "name": "customer_id", "generator": "reference", "reference": "customers" },
+      { "name": "status", "type": "text", "generator": "choice", "choices": ["new", "paid", "shipped", "done"] }
+    ] },
+    { "name": "order_items", "rowsMultiplier": 4, "columns": [
+      { "name": "id", "primaryKey": true },
+      { "name": "order_id", "generator": "reference", "reference": "orders" },
+      { "name": "product_id", "generator": "reference", "reference": "products" },
+      { "name": "quantity", "type": "int32", "generator": "integer", "min": 1, "max": 5 }
+    ] }
+  ],
+  "afterLoad": { "sql": "CREATE INDEX orders_customer_idx ON orders(customer_id); CREATE INDEX items_order_idx ON order_items(order_id);" },
+  "operations": [
+    { "id": "customer", "name": "Карточка покупателя", "weight": 50,
+      "parameters": [{ "name": "customer_id", "generator": "reference", "reference": "customers" }],
+      "steps": [{ "command": { "sql": "SELECT id,email,name FROM customers WHERE id=@customer_id" }, "minRows": 1, "maxRows": 1 }] },
+    { "id": "history", "name": "История заказов с товарами", "weight": 40,
+      "parameters": [{ "name": "customer_id", "generator": "reference", "reference": "customers" }],
+      "steps": [{ "command": { "sql": "SELECT o.id,o.status,p.title,i.quantity FROM orders o JOIN order_items i ON i.order_id=o.id JOIN products p ON p.id=i.product_id WHERE o.customer_id=@customer_id ORDER BY o.id LIMIT 50" }, "minRows": 0, "maxRows": 50 }] },
+    { "id": "checkout", "name": "Создание заказа", "weight": 10, "readOnly": false, "transaction": true,
+      "parameters": [{ "name": "customer_id", "generator": "reference", "reference": "customers" }, { "name": "product_id", "generator": "reference", "reference": "products" }],
+      "steps": [
+        { "command": { "sql": "INSERT INTO orders(id,customer_id,status) VALUES(@rows_orders+@sequence,@customer_id,'new')" }, "result": "nonQuery", "minRows": 1, "maxRows": 1 },
+        { "command": { "sql": "INSERT INTO order_items(id,order_id,product_id,quantity) VALUES(@rows_order_items+@sequence,@rows_orders+@sequence,@product_id,1)" }, "result": "nonQuery", "minRows": 1, "maxRows": 1 }
+      ] }
+  ],
+  "checks": [
+    { "name": "Все заказы принадлежат покупателям", "command": { "sql": "SELECT COUNT(*) FROM orders o LEFT JOIN customers c ON c.id=o.customer_id WHERE c.id IS NULL" }, "expected": "0" },
+    { "name": "Все позиции принадлежат заказам", "command": { "sql": "SELECT COUNT(*) FROM order_items i LEFT JOIN orders o ON o.id=i.order_id WHERE o.id IS NULL" }, "expected": "0" }
+  ]
+}

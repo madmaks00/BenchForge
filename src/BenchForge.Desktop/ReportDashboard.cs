@@ -173,7 +173,7 @@ public sealed class ReportDashboard : UserControl
             var stages = _report.Config.Plan?.Stages.Select((step, index) => new StageChoice(index + 1, step)).ToArray() ?? [];
             _stage.ItemsSource = stages;
             _stage.SelectedItem = stages.FirstOrDefault(stage => stage.Number == previousStage) ?? stages.FirstOrDefault();
-            var phases = ReportAnalysis.KnownPhases.Where(p => _data.Any(r => r.Phase == p)).OrderBy(p => ReportAnalysis.SetupPhase(p) ? 1 : 0).Select(p => new PhaseChoice(p, ReportAnalysis.PhaseName(p))).ToArray();
+            var phases = _data.Select(row => row.Phase).Distinct().OrderBy(p => ReportAnalysis.SetupPhase(p) ? 1 : 0).Select(p => new PhaseChoice(p, ReportAnalysis.PhaseName(p, _report.Config.CustomWorkload))).ToArray();
             if (phases.Length == 0) phases = [new(nameof(Scenario.PointRead), ReportAnalysis.PhaseName(nameof(Scenario.PointRead)))];
             _phase.ItemsSource = phases; _phase.SelectedItem = phases.FirstOrDefault(p => p.Id == previous.Phase) ?? phases[0];
             var names = _report.Config.Targets.Concat(_data.Select(r => r.Target)).Distinct().Select(t => Catalog.Get(t).Name).ToArray();
@@ -182,6 +182,7 @@ public sealed class ReportDashboard : UserControl
             _targets.Text = string.Join(", ", names);
             var workload = _report.Config.Plan is { } plan ? $"{LoadPlan.Name(plan.Profile)} · {plan.Seconds:0.###} с на операцию" : $"{_report.Config.DurationSeconds:g} с на операцию";
             _meta.Text = $"{_report.StartedAt.ToLocalTime():dd MMM yyyy, HH:mm}\n{workload} · повторов: {_report.Config.Repeats}";
+            if (_report.Config.CustomWorkload is { } custom) _meta.Text += "\n" + custom.Name;
             RefreshPage();
         }
         finally { _updating = false; }
@@ -234,7 +235,7 @@ public sealed class ReportDashboard : UserControl
             notes.Children.Add(Ui.Label("Разброс = (максимум − минимум) / медиана. Порог предупреждения 10% — подсказка, а не проверка статистической значимости.", 12));
         }
         var stage = slice.StageNumber is not null && _stage.SelectedItem is StageChoice choice ? choice.Stage : null;
-        var condition = $"{ReportAnalysis.Count(slice.Rows)} записей · клиентов: {slice.Clients}" + (stage is null ? "" : $" · {stage.Name}");
+        var condition = $"{ReportAnalysis.Count(slice.Rows)} {(_report.Config.CustomWorkload is null ? "записей" : "базовых строк")} · клиентов: {slice.Clients}" + (stage is null ? "" : $" · {stage.Name}");
         if (stage?.OperationsPerSecond is { } goal) condition += $" · цель {goal:N0} оп./с";
         var story = Ui.Stack(16, Ui.Badge(narrative.Review.Label, narrative.Preliminary ? Ui.Amber : Ui.Green),
             Ui.Label(narrative.Headline, 21, Ui.Text, true), Ui.Label(condition, 13),
@@ -259,6 +260,19 @@ public sealed class ReportDashboard : UserControl
                 operations.Content = BuildOperationTable();
         };
         result.Children.Add(operations);
+        if (_report.Config.CustomWorkload is { } customWorkload)
+        {
+            var breakdown = Ui.Stack(10, Ui.Label("Фактические действия в выбранном измерении. Задержка относится ко всей операции, включая транзакцию.", 12));
+            foreach (var measured in matched.Where(row => row.OperationBreakdown is not null))
+            {
+                breakdown.Children.Add(Ui.Label(Catalog.Get(measured.Target).Name + " · повтор " + measured.Repeat, 14, Ui.Text, true));
+                foreach (var detail in measured.OperationBreakdown!) breakdown.Children.Add(Ui.Label($"{detail.Name}: {detail.SuccessfulOperations:N0} успешных · {detail.Errors:N0} ошибок · p99 {ReportAnalysis.Number(detail.ServiceLatency.P99Ms, "мс")}", 13));
+            }
+            result.Children.Add(new Expander { Header = "Действия внутри своего сценария", Content = breakdown });
+            result.Children.Add(new Expander { Header = "Описание и воспроизводимость сценария", Content = Ui.Stack(12, Ui.Label(customWorkload.Name, 16, Ui.Text, true), Ui.Label(customWorkload.Description),
+                Ui.Label("SHA-256 описания: " + customWorkload.Fingerprint + "\nРежим: " + customWorkload.Mode + "\nСброс между отдельными операциями: " + customWorkload.ResetBetweenOperations, 12),
+                Ui.Label(string.Join("\n", customWorkload.Datasets.Select(table => table.Name + " · " + table.RowCount(slice.Rows).ToString("N0") + " строк" + (table.Import is null ? " · генератор" : " · " + table.Import.File + " · SHA-256 " + table.Import.Sha256))), 12)) });
+        }
         var conditions = Ui.Stack(12, BuildMetricTable(slice), Ui.Label(ReportAnalysis.PhaseExplanation(slice.Phase)),
             Ui.Label(ComparisonQuality.EnvironmentDescription(_report), 14, Ui.Text), Ui.Label("ОС: " + _report.Environment.GetValueOrDefault("os", "не сохранена") +
             "\nЛогических процессоров: " + _report.Environment.GetValueOrDefault("logical_cpus", "—") + $"\nЛимит серверной БД: {_report.Config.CpuLimit:g} CPU · {_report.Config.MemoryMb:N0} МБ RAM"),
@@ -305,7 +319,7 @@ public sealed class ReportDashboard : UserControl
         var rates = ReportAnalysis.Compare(_report, _data, slice, AnalysisMetric.Rate);
         var p99 = ReportAnalysis.Compare(_report, _data, slice, AnalysisMetric.P99);
         var memory = ReportAnalysis.Compare(_report, _data, slice, AnalysisMetric.ServerMemory);
-        var panel = Ui.Stack(0); var header = TableLine(_comparison.SelectedIndex == 1 ? "Движок" : "База данных", slice.Phase == "index_build" ? "Подготовка, с" : "Скорость, " + ReportAnalysis.RateUnit(slice.Phase), "Ответ p99, мс", "Память базы, МБ", true);
+        var panel = Ui.Stack(0); var header = TableLine(_comparison.SelectedIndex == 1 ? "Движок" : "База данных", slice.Phase == "index_build" || WorkloadPhases.Duration(slice.Phase) ? "Подготовка, с" : "Скорость, " + ReportAnalysis.RateUnit(slice.Phase), "Ответ p99, мс", "Память базы, МБ", true);
         panel.Children.Add(header); panel.Children.Add(Ui.Rule());
         foreach (var item in rates)
         {
@@ -411,7 +425,7 @@ public sealed class ReportDashboard : UserControl
         var rows = _all.IsChecked == true ? _data : _data.Where(r => r.DatasetRows == slice.Rows && r.Clients == slice.Clients && r.Stage?.Number == slice.StageNumber && ReportAnalysis.IdentityMatches(r, slice)).ToArray();
         var showStage = _report.Config.Plan?.Stages.Count > 1;
         _details.Clear();
-        foreach (var r in rows) _details.Add(new(r, Catalog.Get(r.Target).Name, Engines.Name(r.Engine), ReportAnalysis.PhaseName(r.Phase) + (showStage && r.Stage is { } stage ? " · " + stage.Name : ""), ReportAnalysis.Count(r.DatasetRows), r.Clients.ToString(), r.Repeat.ToString(),
+        foreach (var r in rows) _details.Add(new(r, Catalog.Get(r.Target).Name, Engines.Name(r.Engine), ReportAnalysis.PhaseName(r.Phase, _report.Config.CustomWorkload) + (showStage && r.Stage is { } stage ? " · " + stage.Name : ""), ReportAnalysis.Count(r.DatasetRows), r.Clients.ToString(), r.Repeat.ToString(),
             ReportAnalysis.Number(ReportAnalysis.Rate(r), ReportAnalysis.RateUnit(r.Phase)), ReportAnalysis.Number(r.ServiceLatency?.P99Ms), ReportAnalysis.Count(r.Errors),
             r.Cancelled ? "Остановлен" : !r.Verified ? "Не проверен" : r.Errors > 0 ? "Есть ошибки" : "Проверен", ReportAnalysis.Number(r.Client?.RssSampledMaxMb),
             ReportAnalysis.Number(r.Server?.MemorySampledMaxMb), ReportAnalysis.Number(r.Client?.CpuPercent), ReportAnalysis.Number(r.Server?.CpuMeanPercent),

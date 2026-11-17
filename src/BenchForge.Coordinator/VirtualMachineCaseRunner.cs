@@ -73,10 +73,18 @@ public sealed class VirtualMachineCaseRunner(IVmCommandClient? commands = null) 
             await File.WriteAllTextAsync(configFile, JsonSerializer.Serialize(guestConfig, Json.Pretty), token);
             await _commands.RunAsync(["transfer", archive, configFile, name + ":" + GuestRoot + "/"], token, 300);
             await _commands.RunAsync(["exec", name, "--", "tar", "-xzf", GuestRoot + "/agent.tar.gz", "-C", GuestRoot + "/agent"], token);
+            if (WorkloadFiles.Imports(config).Any())
+            {
+                var inputs = Path.Combine(temp, "inputs.tar.gz");
+                await WorkloadFiles.CreateArchiveAsync(config, inputs, token);
+                await _commands.RunAsync(["transfer", inputs, name + ":" + GuestRoot + "/inputs.tar.gz"], token, 600);
+                await _commands.RunAsync(["exec", name, "--", "mkdir", "-p", GuestRoot + "/inputs"], token);
+                await _commands.RunAsync(["exec", name, "--", "tar", "-xzf", GuestRoot + "/inputs.tar.gz", "-C", GuestRoot + "/inputs"], token, 600);
+            }
             string? guestFolder = null;
             var cancelFile = GuestRoot + "/cancel";
             var exit = await _commands.RunGuestAsync(["exec", name, "--", "sudo", "-n", "dotnet", GuestRoot + "/agent/BenchForge.Cli.dll",
-                "--config", GuestRoot + "/config.json", "--reports", GuestRoot + "/reports", "--events", "--cancel-file", cancelFile], async update =>
+                "--config", GuestRoot + "/config.json", "--workload-inputs", GuestRoot + "/inputs", "--reports", GuestRoot + "/reports", "--events", "--cancel-file", cancelFile], async update =>
             {
                 if (update.Type == "started" && update.Folder is { } folder)
                 {

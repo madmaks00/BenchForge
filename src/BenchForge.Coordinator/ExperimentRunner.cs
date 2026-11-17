@@ -15,6 +15,8 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
     public static async Task<List<string>> PreflightAsync(BenchmarkConfig config, CancellationToken token, IVirtualMachineCaseRunner? virtualMachines = null, IWorkerHost? workerHost = null, IRemoteExperimentRunner? remote = null)
     {
         var problems = new List<string>();
+        try { config.Validate(); await WorkloadFiles.CheckAsync(config, token); }
+        catch (Exception error) when (error is not OperationCanceledException) { problems.Add(error.Message); return problems; }
         if (config.RemoteServer is not null)
         {
             try { await (remote ?? new RemoteExperimentRunner()).CheckAsync(config, token); }
@@ -81,7 +83,7 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                     token.ThrowIfCancellationRequested();
                     var caseId = Guid.NewGuid().ToString("N");
                     var load = config.Plan is { } plan ? LoadPlan.Name(plan.Profile) : $"клиентов: {clients}";
-                    var label = $"{Catalog.Get(target).Name} · {Engines.Name(engine)} · {rows:N0} записей · {load} · повтор {repeat}";
+                    var label = $"{Catalog.Get(target).Name} · {Engines.Name(engine)} · {rows:N0} {(config.CustomWorkload is null ? "записей" : "базовых строк")} · {load} · повтор {repeat}";
                     Log(label);
                     if (config.VirtualMachine is not null)
                     {
@@ -131,7 +133,7 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                     try
                     {
                         await owned.StartAsync(token); resources.Start(owned.Container);
-                        var run = new RunCase(caseId, target, rows, clients, repeat, config, owned.Endpoint, engine);
+                        var run = new RunCase(caseId, target, rows, clients, repeat, config, owned.Endpoint, engine, config.WorkloadDirectory);
                         long? phaseEnd = null;
                         await _workerHost.RunAsync(run, async message =>
                         {

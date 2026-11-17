@@ -19,7 +19,7 @@ public static class ReportAnalysis
     public static readonly AnalysisMetric[] Metrics = Enum.GetValues<AnalysisMetric>();
     public static readonly string[] KnownPhases = new[] { "bulk_load", "index_build" }.Concat(Enum.GetNames<Scenario>()).ToArray();
     private static readonly CultureInfo Russian = CultureInfo.GetCultureInfo("ru-RU");
-    public static string PhaseName(string phase) => phase switch
+    public static string PhaseName(string phase, SqlWorkload? workload = null) => phase.StartsWith("custom/", StringComparison.Ordinal) ? WorkloadPhases.Name(phase, workload) : phase switch
     {
         "bulk_load" => "Загрузка данных", "index_build" => "Создание индекса",
         _ => Enum.TryParse<Scenario>(phase, out var value) ? Catalog.Name(value) : phase
@@ -37,17 +37,17 @@ public static class ReportAnalysis
         nameof(Scenario.Insert) => "Одна операция вставляет новую запись и ждёт подтверждения выбранной СУБД.",
         nameof(Scenario.BatchInsert) => "Каждая операция записывает пакет. Скорость показана в записях за секунду; транспорты и гарантии записи различаются между СУБД.",
         nameof(Scenario.Delete) => "Удаляются существующие исходные записи по ID. Если они закончились, этап может завершиться раньше заданного времени.",
-        _ => "Измерения выбранного этапа эксперимента."
+        _ => phase.StartsWith("custom/", StringComparison.Ordinal) ? "Одна операция включает все SQL-шаги, получение ответа, проверки и фиксацию транзакции. Параметры создаются внутри измеряемого вызова. Подготовка подключений и контрольные запросы целостности выполняются вне времени запросов." : "Измерения выбранного этапа эксперимента."
     };
-    public static bool SetupPhase(string phase) => phase is "bulk_load" or "index_build";
+    public static bool SetupPhase(string phase) => phase is "bulk_load" or "index_build" || WorkloadPhases.Setup(phase);
     public static bool Valid(PhaseResult row) => row.Verified && !row.Cancelled && row.Errors == 0;
     public static double? Rate(PhaseResult row) => row.Unit == "seconds" ? row.ElapsedSeconds : row.Unit == "rows/s" ? row.RowsPerSecond : row.OperationsPerSecond;
-    public static string RateUnit(string phase) => phase == "index_build" ? "с" : phase is "bulk_load" or nameof(Scenario.BatchInsert) ? "зап./с" : "оп./с";
+    public static string RateUnit(string phase) => phase == "index_build" || WorkloadPhases.Duration(phase) ? "с" : phase is "bulk_load" or nameof(Scenario.BatchInsert) || WorkloadPhases.Setup(phase) && phase.EndsWith("/load", StringComparison.Ordinal) ? "зап./с" : "оп./с";
     public static MetricDescription Describe(AnalysisMetric metric, string phase) => metric switch
     {
-        AnalysisMetric.Rate => new(phase == "index_build" ? "Время подготовки" : "Скорость выполнения", RateUnit(phase),
-            phase == "index_build" ? MetricDirection.Lower : MetricDirection.Higher,
-            phase == "index_build" ? "Меньше — подготовка завершилась быстрее. Это время этапа, не скорость запросов."
+        AnalysisMetric.Rate => new(phase == "index_build" || WorkloadPhases.Duration(phase) ? "Время подготовки" : "Скорость выполнения", RateUnit(phase),
+            phase == "index_build" || WorkloadPhases.Duration(phase) ? MetricDirection.Lower : MetricDirection.Higher,
+            phase == "index_build" || WorkloadPhases.Duration(phase) ? "Меньше — подготовка завершилась быстрее. Это время этапа, не скорость запросов."
                 : phase is "bulk_load" or nameof(Scenario.BatchInsert) ? "Больше — записано больше строк за секунду. Размер пакета и способ записи смотрите в условиях отчёта."
                 : "Больше — выполнено больше успешных операций за секунду. Сравнивайте один сценарий при одинаковой нагрузке."),
         AnalysisMetric.P99 => new("Время ответа для 99% запросов", "мс", MetricDirection.Lower,
@@ -94,7 +94,7 @@ public static class ReportAnalysis
         return text + (unit.Length > 0 ? " " + unit : "");
     }
     public static string Count(long value) => value.ToString("N0", Russian);
-    internal static bool Supported(TargetKind target, string phase) => phase == "bulk_load" || phase == "index_build"
+    internal static bool Supported(TargetKind target, string phase) => phase.StartsWith("custom/", StringComparison.Ordinal) && SqlWorkload.Supports(target) || phase == "bulk_load" || phase == "index_build"
         && target is not (TargetKind.Redis or TargetKind.Valkey or TargetKind.ClickHouse)
         || Enum.TryParse<Scenario>(phase, out var scenario) && Catalog.Get(target).Scenarios.Contains(scenario);
 
@@ -156,11 +156,11 @@ public static class ReportAnalysis
             : delta < .05 ? $"Разница между {best.Name} и {other.Name} меньше 0,1%"
             : description.Direction == MetricDirection.Higher ? $"{best.Name}: на {delta.Value.ToString("N1", Russian)}% больше за секунду, чем {other.Name}"
             : metric is AnalysisMetric.ErrorPercent or AnalysisMetric.DropPercent ? $"{best.Name}: {Number(best.Median, "%")} против {Number(other.Median, "%")} у {other.Name}"
-            : $"{best.Name}: {(slice.Phase == "index_build" ? "время подготовки" : "задержка p99")} на {delta.Value.ToString("N1", Russian)}% меньше, чем у {other.Name}";
+            : $"{best.Name}: {(slice.Phase == "index_build" || WorkloadPhases.Duration(slice.Phase) ? "время подготовки" : "задержка p99")} на {delta.Value.ToString("N1", Russian)}% меньше, чем у {other.Name}";
         if (observed.Length > 2) notes.Add("Процент в пояснении сравнивает два лучших наблюдавшихся значения выбранного показателя. Остальные варианты видны на графике.");
         if (best.ValidRepeats > 1 && other.ValidRepeats > 1 && !(best.Minimum <= other.Maximum && other.Minimum <= best.Maximum))
             notes.Add("В этих повторах диапазоны значений не пересекались. Это описание наблюдений, не статистическая гарантия.");
-        var explanation = $"{PhaseName(slice.Phase)} · {Count(slice.Rows)} записей · {slice.Clients} клиентов. "
+        var explanation = $"{PhaseName(slice.Phase, report.Config.CustomWorkload)} · {Count(slice.Rows)} базовых записей · {slice.Clients} клиентов. "
             + (metric is AnalysisMetric.ErrorPercent or AnalysisMetric.DropPercent ? "Сравниваются медианы долей по сохранённым прогонам. " : "Сравниваются медианы корректных повторов в этом отчёте. ")
             + (comparingEngines ? "Это наблюдение данного теста, а не общий рейтинг языков." : "Это наблюдение данного теста, а не общий рейтинг СУБД.");
         var observation = headline;

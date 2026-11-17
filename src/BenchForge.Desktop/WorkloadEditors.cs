@@ -98,11 +98,11 @@ internal static class WorkloadForm
 internal sealed class SqlTextEditor : UserControl
 {
     private SqlText _value;
-    private readonly ComboBox _dialect = new() { ItemsSource = new[] { "Общий SQL", "PostgreSQL", "MySQL", "MariaDB", "SQLite" }, SelectedIndex = 0 };
+    private readonly ComboBox _dialect = new() { ItemsSource = new[] { "Общий SQL", "PostgreSQL", "MySQL", "MariaDB", "SQLite", "SQL Server" }, SelectedIndex = 0 };
     private readonly TextBox _sql;
     private int _index;
     private string _loaded;
-    private static readonly TargetKind[] Targets = [TargetKind.PostgreSql, TargetKind.MySql, TargetKind.MariaDb, TargetKind.Sqlite];
+    private static readonly TargetKind[] Targets = [TargetKind.PostgreSql, TargetKind.MySql, TargetKind.MariaDb, TargetKind.Sqlite, TargetKind.SqlServer];
     public SqlTextEditor(SqlText value, double height = 200)
     {
         _value = value with { Overrides = new(value.Overrides) }; _loaded = value.Sql; _sql = WorkloadForm.Text(value.Sql, true, height);

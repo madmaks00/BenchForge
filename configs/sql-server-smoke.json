@@ -1,0 +1,12 @@
+{
+  "engines": ["csharp"],
+  "targets": ["sqlServer"],
+  "datasetRows": [1000],
+  "clients": [1, 2],
+  "repeats": 1,
+  "durationSeconds": 1,
+  "warmupSeconds": 0.2,
+  "batchSize": 1000,
+  "cpuLimit": 2,
+  "memoryMb": 2048
+}

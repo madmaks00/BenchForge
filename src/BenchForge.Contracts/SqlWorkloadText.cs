@@ -7,6 +7,7 @@ public static class SqlWorkloadText
     public static string Quote(string identifier, TargetKind target)
     {
         if (!SqlWorkload.Identifier(identifier)) throw new ArgumentException("Некорректное имя SQL: " + identifier);
+        if (target == TargetKind.SqlServer) return "[" + identifier + "]";
         return target is TargetKind.MySql or TargetKind.MariaDb ? "`" + identifier + "`" : "\"" + identifier + "\"";
     }
     public static string AutoSchema(SqlWorkload workload, TargetKind target)
@@ -26,9 +27,10 @@ public static class SqlWorkloadText
     private static string TypeName(ValueDefinition value, TargetKind target) => value.Type switch
     {
         SqlValueType.Int64 => "BIGINT", SqlValueType.Int32 => "INTEGER", SqlValueType.Decimal => "DECIMAL(28,12)",
-        SqlValueType.Double => target == TargetKind.PostgreSql ? "DOUBLE PRECISION" : "DOUBLE",
-        SqlValueType.Boolean => "BOOLEAN", SqlValueType.DateTime => target == TargetKind.PostgreSql ? "TIMESTAMPTZ" : target == TargetKind.Sqlite ? "TEXT" : "DATETIME(6)",
-        SqlValueType.Guid => target == TargetKind.PostgreSql ? "UUID" : "CHAR(36)",
+        SqlValueType.Double => target == TargetKind.PostgreSql ? "DOUBLE PRECISION" : target == TargetKind.SqlServer ? "FLOAT" : "DOUBLE",
+        SqlValueType.Boolean => target == TargetKind.SqlServer ? "BIT" : "BOOLEAN", SqlValueType.DateTime => target == TargetKind.SqlServer ? "DATETIME2(6)" : target == TargetKind.PostgreSql ? "TIMESTAMPTZ" : target == TargetKind.Sqlite ? "TEXT" : "DATETIME(6)",
+        SqlValueType.Guid => target == TargetKind.PostgreSql ? "UUID" : target == TargetKind.SqlServer ? "UNIQUEIDENTIFIER" : "CHAR(36)",
+        _ when target == TargetKind.SqlServer => value.PrimaryKey || value.Unique ? "NVARCHAR(450)" : "NVARCHAR(MAX)",
         _ => target is TargetKind.MySql or TargetKind.MariaDb && (value.PrimaryKey || value.Unique) ? "VARCHAR(191)" : "TEXT"
     };
 

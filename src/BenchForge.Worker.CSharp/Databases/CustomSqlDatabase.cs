@@ -25,6 +25,7 @@ public sealed class CustomSqlDatabase(RunCase run) : IDatabase
 
     public async Task InitializeAsync(CancellationToken token)
     {
+        await SqlConnections.EnsureDatabaseAsync(run, token);
         _admin = SqlConnections.Create(run.Target, _connectionString);
         try { await _admin.OpenAsync(token); await SqlConnections.ConfigureAsync(_admin, run.Target, true, token); }
         catch { await _admin.DisposeAsync(); _admin = null; throw; }
@@ -61,7 +62,7 @@ public sealed class CustomSqlDatabase(RunCase run) : IDatabase
             await using var command = _admin!.CreateCommand(); command.CommandTimeout = 600;
             command.CommandText = "INSERT INTO " + SqlWorkloadText.Quote(table.Name, run.Target) + " (" + string.Join(',', table.Columns.Select(column => SqlWorkloadText.Quote(column.Name, run.Target))) +
                 ") VALUES (" + string.Join(',', table.Columns.Select(column => "@" + column.Name)) + ")";
-            foreach (var column in table.Columns) { var parameter = AddParameter(command, column.Name, column.Type); if (column.Type == SqlValueType.Guid && run.Target != TargetKind.PostgreSql) parameter.DbType = DbType.String; }
+            foreach (var column in table.Columns) { var parameter = AddParameter(command, column.Name, column.Type); if (column.Type == SqlValueType.Guid && run.Target is not (TargetKind.PostgreSql or TargetKind.SqlServer)) parameter.DbType = DbType.String; }
             await command.PrepareAsync(token);
             IEnumerator<Dictionary<string, object?>>? imported = null;
             if (table.Import is { } import)
@@ -143,7 +144,7 @@ public sealed class CustomSqlDatabase(RunCase run) : IDatabase
     public Task<long> CountAsync(CancellationToken token) => Task.FromResult(TableRows.Values.Sum());
     public async Task<EngineMetadata> MetadataAsync(CancellationToken token)
     {
-        await using var command = _admin!.CreateCommand(); command.CommandText = run.Target == TargetKind.Sqlite ? "SELECT sqlite_version()" : "SELECT VERSION()";
+        await using var command = _admin!.CreateCommand(); command.CommandText = SqlConnections.VersionQuery(run.Target);
         return new("csharp", RuntimeInformation.FrameworkDescription, DriverIdentity.Of(_admin.GetType()), Convert.ToString(await command.ExecuteScalarAsync(token))!,
             new() { ["workload_name"] = _workload.Name, ["workload_sha256"] = _workload.Fingerprint, ["workload_mode"] = _workload.Mode.ToString(),
                 ["connections"] = "one dedicated SQL connection per logical client; pooling=false", ["prepared_queries"] = _workload.PrepareCommands.ToString(),
@@ -184,9 +185,15 @@ public sealed class CustomSqlDatabase(RunCase run) : IDatabase
         var parameter = command.CreateParameter(); parameter.ParameterName = "@" + name; parameter.Value = DBNull.Value;
         parameter.DbType = type switch { SqlValueType.Int64 => DbType.Int64, SqlValueType.Int32 => DbType.Int32, SqlValueType.Decimal => DbType.Decimal, SqlValueType.Double => DbType.Double,
             SqlValueType.Boolean => DbType.Boolean, SqlValueType.DateTime => DbType.DateTime, SqlValueType.Guid => DbType.Guid, _ => DbType.String };
+        if (parameter is Microsoft.Data.SqlClient.SqlParameter)
+        {
+            if (type == SqlValueType.Text) parameter.Size = -1;
+            if (type == SqlValueType.Decimal) { parameter.Precision = 28; parameter.Scale = 12; }
+            if (type == SqlValueType.DateTime) { parameter.DbType = DbType.DateTime2; parameter.Size = 8; parameter.Scale = 6; }
+        }
         command.Parameters.Add(parameter); return parameter;
     }
-    internal static object ProviderValue(object value, SqlValueType type, TargetKind target) => value is not DBNull && type == SqlValueType.Guid && target != TargetKind.PostgreSql ? value.ToString()! : value;
+    internal static object ProviderValue(object value, SqlValueType type, TargetKind target) => value is not DBNull && type == SqlValueType.Guid && target is not (TargetKind.PostgreSql or TargetKind.SqlServer) ? value.ToString()! : value;
     public async ValueTask DisposeAsync() { if (_admin is not null) await _admin.DisposeAsync(); }
 }
 
@@ -218,7 +225,7 @@ internal sealed class CustomSqlSession(CustomSqlDatabase database, RunCase run, 
                 var command = connection.CreateCommand(); command.CommandText = step.Command.For(run.Target); command.CommandTimeout = _workload.CommandTimeoutSeconds;
                 commands.Add((step, command));
                 foreach (var name in SqlWorkloadText.Parameters(command.CommandText))
-                { var type = parameters.GetValueOrDefault(name, SqlValueType.Int64); var parameter = CustomSqlDatabase.AddParameter(command, name, type); if (type == SqlValueType.Guid && run.Target != TargetKind.PostgreSql) parameter.DbType = DbType.String; }
+                { var type = parameters.GetValueOrDefault(name, SqlValueType.Int64); var parameter = CustomSqlDatabase.AddParameter(command, name, type); if (type == SqlValueType.Guid && run.Target is not (TargetKind.PostgreSql or TargetKind.SqlServer)) parameter.DbType = DbType.String; }
                 if (_workload.PrepareCommands) await command.PrepareAsync(token);
             }
         }

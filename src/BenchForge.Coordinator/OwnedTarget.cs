@@ -22,11 +22,17 @@ public sealed class OwnedTarget(TargetKind target, BenchmarkConfig config, strin
             Endpoint = new("", 0, "", "", "", _file); return;
         }
         var image = config.Image(target); var info = Catalog.Get(target);
+        if (target == TargetKind.SqlServer)
+        {
+            var architecture = await ProcessUtil.RunAsync(_docker, ["info", "--format", "{{.Architecture}}"], token, 15);
+            if (architecture is not ("x86_64" or "amd64"))
+                throw new InvalidOperationException("SQL Server требует Docker на Linux x64. Для ARM-компьютера выберите Linux-сервер x64 по SSH.");
+        }
         var peakClients = config.CaseClients().Max();
         try { await ProcessUtil.RunAsync(_docker, ["image", "inspect", image], token, 15); }
         catch (InvalidOperationException)
         { log("Загрузка образа " + image); await ProcessUtil.RunAsync(_docker, ["pull", image], token, 1800); }
-        var password = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
+        var password = "Bf!a" + Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
         var environment = new Dictionary<string, string>();
         _container = "dblab-" + target.ToString().ToLowerInvariant() + "-" + caseId[..12];
         var args = new List<string> { "run", "--detach", "--rm", "--name", _container, "--label", "dblab.case=" + caseId,
@@ -49,6 +55,9 @@ public sealed class OwnedTarget(TargetKind target, BenchmarkConfig config, strin
                 Env(prefix + "DATABASE", "dblab"); Env(prefix + "USER", "dblab"); Env(prefix + "PASSWORD", password);
                 Env(prefix + "ROOT_PASSWORD", Convert.ToHexString(RandomNumberGenerator.GetBytes(24)));
                 command.Add("--max-connections=" + ((long)peakClients + 16)); break;
+            case TargetKind.SqlServer:
+                Env("ACCEPT_EULA", "Y"); Env("MSSQL_PID", "Developer"); Env("MSSQL_SA_PASSWORD", password);
+                Env("MSSQL_MEMORY_LIMIT_MB", (config.MemoryMb * 80 / 100).ToString(CultureInfo.InvariantCulture)); break;
             case TargetKind.MongoDb:
                 Env("MONGO_INITDB_ROOT_USERNAME", "dblab"); Env("MONGO_INITDB_ROOT_PASSWORD", password); break;
             case TargetKind.Redis: case TargetKind.Valkey:
@@ -65,7 +74,7 @@ public sealed class OwnedTarget(TargetKind target, BenchmarkConfig config, strin
         await ProcessUtil.RunAsync(_docker, args, token, 60, environment);
         var binding = await ProcessUtil.RunAsync(_docker, ["port", _container, info.Port + "/tcp"], token);
         var port = int.Parse(binding.Split('\n')[0].Trim().Split(':')[^1], CultureInfo.InvariantCulture);
-        Endpoint = new("127.0.0.1", port, "dblab", password, "dblab");
+        Endpoint = new("127.0.0.1", port, target == TargetKind.SqlServer ? "sa" : "dblab", password, "dblab");
         ImageId = await ProcessUtil.RunAsync(_docker, ["inspect", "--format", "{{.Image}}", _container], token);
         log("Ожидание готовности " + info.Name);
         var deadline = DateTimeOffset.UtcNow.AddMinutes(4);

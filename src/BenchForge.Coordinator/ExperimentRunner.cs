@@ -43,6 +43,11 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
             {
                 var os = await ProcessUtil.RunAsync(ProcessUtil.Docker(), ["info", "--format", "{{.OSType}}"], token, 15);
                 if (os != "linux") problems.Add("В Docker Desktop нужен режим Linux containers.");
+                if (config.Targets.Contains(TargetKind.SqlServer))
+                {
+                    var architecture = await ProcessUtil.RunAsync(ProcessUtil.Docker(), ["info", "--format", "{{.Architecture}}"], token, 15);
+                    if (architecture is not ("x86_64" or "amd64")) problems.Add("SQL Server требует Docker на Linux x64; можно выбрать Linux-сервер x64 по SSH.");
+                }
             }
             catch (Exception e) when (e is not OperationCanceledException) { problems.Add("Docker недоступен. Запустите Docker Desktop. " + e.Message); }
         }

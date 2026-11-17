@@ -17,8 +17,17 @@ public sealed class RemoteExperimentRunner(RemoteAgentClient? client = null, Rem
 {
     private readonly RemoteAgentClient _client = client ?? new();
     private readonly RemoteJobStore _store = store ?? new();
-    public async Task CheckAsync(BenchmarkConfig config, CancellationToken token) =>
-        _ = await _client.CheckAsync(config.RemoteServer ?? throw new ArgumentException("Не выбран сервер."), config.EngineIds, token);
+    public async Task CheckAsync(BenchmarkConfig config, CancellationToken token)
+    {
+        var (info, _) = await _client.CheckAsync(config.RemoteServer ?? throw new ArgumentException("Не выбран сервер."), config.EngineIds, token);
+        CheckArchitecture(config, info);
+    }
+
+    private static void CheckArchitecture(BenchmarkConfig config, RemoteServerInfo info)
+    {
+        if (config.Targets.Contains(TargetKind.SqlServer) && info.Architecture != "x86_64")
+            throw new InvalidOperationException("Для SQL Server нужен Linux-сервер x64; ARM не поддерживается образом Microsoft.");
+    }
 
     public async Task<(BenchmarkReport Report, string Folder)> RunAsync(BenchmarkConfig config, string reportsRoot, Action<RunUpdate>? update, CancellationToken token)
     {
@@ -26,6 +35,7 @@ public sealed class RemoteExperimentRunner(RemoteAgentClient? client = null, Rem
         var server = config.RemoteServer ?? throw new ArgumentException("Не выбран сервер.");
         update?.Invoke(new("log", "Проверка сервера " + server.DisplayName));
         var (info, package) = await _client.CheckAsync(server, config.EngineIds, token);
+        CheckArchitecture(config, info);
         var job = Guid.NewGuid().ToString("N");
         var folder = Path.Combine(Path.GetFullPath(reportsRoot), DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss'Z'") + "-" + job[..8]);
         Directory.CreateDirectory(folder);

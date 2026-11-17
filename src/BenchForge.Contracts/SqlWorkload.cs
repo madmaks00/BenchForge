@@ -107,7 +107,7 @@ public sealed record SqlWorkload
     public List<SqlCheck> Checks { get; init; } = [];
     [JsonIgnore] public string Fingerprint => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(this, Json.Options)))).ToLowerInvariant();
     [JsonIgnore] public IEnumerable<SqlOperation> ActiveOperations => Operations.Where(operation => operation.Enabled);
-    public static bool Supports(TargetKind target) => target is TargetKind.PostgreSql or TargetKind.MySql or TargetKind.MariaDb or TargetKind.Sqlite;
+    public static bool Supports(TargetKind target) => target is TargetKind.PostgreSql or TargetKind.MySql or TargetKind.MariaDb or TargetKind.Sqlite or TargetKind.SqlServer;
     public static bool Identifier(string? name) => name is not null && Regex.IsMatch(name, "^[A-Za-z_][A-Za-z0-9_]{0,62}$");
 
     public void Validate(BenchmarkConfig? config = null)
@@ -148,7 +148,7 @@ public sealed record SqlWorkload
             foreach (var step in operation.Steps)
             {
                 ValidateSql(step.Command, false);
-                foreach (var target in config?.Targets ?? [TargetKind.PostgreSql, TargetKind.MySql, TargetKind.MariaDb, TargetKind.Sqlite])
+                foreach (var target in config?.Targets ?? [TargetKind.PostgreSql, TargetKind.MySql, TargetKind.MariaDb, TargetKind.Sqlite, TargetKind.SqlServer])
                     foreach (var parameter in SqlWorkloadText.Parameters(step.Command.For(target))) Require(available.Contains(parameter), "Не задан параметр @" + parameter + " в операции «" + operation.Name + "». Scalar должен быть сохранён предыдущим шагом.");
                 Require(Enum.IsDefined(step.Result) && Enum.IsDefined(step.CaptureType) && step.MinRows is not < 0 && step.MaxRows is not < 0 && !(step.MinRows > step.MaxRows), "Проверьте ожидаемый результат SQL-шага.");
                 Require(step.CaptureAs is null || Identifier(step.CaptureAs) && step.Result == SqlResultMode.Scalar && names.Add(step.CaptureAs), "Сохранение результата требует Scalar и уникальное имя параметра.");
@@ -166,7 +166,7 @@ public sealed record SqlWorkload
         if (config is not null)
         {
             Require(config.EngineIds.SequenceEqual(["csharp"]), "Свои SQL-сценарии сейчас выполняются движком C#. Другие языки доступны для стандартных тестов.");
-            Require(config.Targets.All(Supports), "Свой SQL-сценарий поддерживает PostgreSQL, MySQL, MariaDB и SQLite.");
+            Require(config.Targets.All(Supports), "Свой SQL-сценарий поддерживает PostgreSQL, MySQL, MariaDB, SQLite и SQL Server.");
         }
 
         void ValidateValues(List<ValueDefinition> values)

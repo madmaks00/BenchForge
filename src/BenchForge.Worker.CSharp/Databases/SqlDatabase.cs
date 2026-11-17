@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using BenchForge.Contracts;
 using Microsoft.Data.Sqlite;
+using Microsoft.Data.SqlClient;
 using MySqlConnector;
 using Npgsql;
 using NpgsqlTypes;
@@ -17,30 +18,16 @@ public sealed class SqlDatabase(RunCase run) : IDatabase
     private SqlSession? _loader;
     private string _connectionString = "";
 
-    private DbConnection CreateConnection() => run.Target switch
-    {
-        TargetKind.PostgreSql => new NpgsqlConnection(_connectionString),
-        TargetKind.Sqlite => new SqliteConnection(_connectionString),
-        _ => new MySqlConnection(_connectionString)
-    };
+    private DbConnection CreateConnection() => SqlConnections.Create(run.Target, _connectionString);
 
     public async Task InitializeAsync(CancellationToken token)
     {
-        var ep = run.Endpoint;
-        _connectionString = run.Target switch
-        {
-            TargetKind.PostgreSql => new NpgsqlConnectionStringBuilder { Host = ep.Host, Port = ep.Port, Username = ep.Username,
-                Password = ep.Password, Database = ep.Database, Pooling = false, Timeout = 5, CommandTimeout = 10,
-                Options = "-c synchronous_commit=on" }.ConnectionString,
-            TargetKind.Sqlite => new SqliteConnectionStringBuilder { DataSource = ep.FilePath, Mode = SqliteOpenMode.ReadWriteCreate,
-                Pooling = false, DefaultTimeout = 10 }.ConnectionString,
-            _ => new MySqlConnectionStringBuilder { Server = ep.Host, Port = (uint)ep.Port, UserID = ep.Username, Password = ep.Password,
-                Database = ep.Database, Pooling = false, ConnectionTimeout = 5, DefaultCommandTimeout = 10,
-                AllowPublicKeyRetrieval = true, SslMode = MySqlSslMode.Disabled }.ConnectionString
-        };
-        _admin = CreateConnection();
-        await _admin.OpenAsync(token);
-        if (run.Target == TargetKind.Sqlite) await ExecAsync("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=10000;", token);
+        await SqlConnections.EnsureDatabaseAsync(run, token);
+        _connectionString = SqlConnections.ConnectionString(run);
+        var connection = CreateConnection();
+        try { await connection.OpenAsync(token); await SqlConnections.ConfigureAsync(connection, run.Target, true, token); }
+        catch { await connection.DisposeAsync(); throw; }
+        _admin = connection;
         _loader = new(_admin, maintenance: true);
     }
 
@@ -53,7 +40,7 @@ public sealed class SqlDatabase(RunCase run) : IDatabase
     public async Task ResetAsync(CancellationToken token)
     {
         await ExecAsync("DROP TABLE IF EXISTS records", token);
-        var textType = run.Target is TargetKind.MySql or TargetKind.MariaDb ? "LONGTEXT" : "TEXT";
+        var textType = run.Target is TargetKind.MySql or TargetKind.MariaDb ? "LONGTEXT" : run.Target == TargetKind.SqlServer ? "NVARCHAR(MAX)" : "TEXT";
         await ExecAsync($"CREATE TABLE records (id BIGINT PRIMARY KEY, group_id INTEGER NOT NULL, amount_cents BIGINT NOT NULL, version BIGINT NOT NULL, payload {textType} NOT NULL)", token);
     }
     public Task LoadBatchAsync(DataRow[] rows, CancellationToken token) => _loader!.WriteBatchAsync(rows, token);
@@ -65,7 +52,7 @@ public sealed class SqlDatabase(RunCase run) : IDatabase
             await using var cmd = _admin!.CreateCommand(); cmd.CommandText = "ANALYZE TABLE records"; cmd.CommandTimeout = 600;
             await using var reader = await cmd.ExecuteReaderAsync(token); while (await reader.ReadAsync(token)) { }
         }
-        else await ExecAsync("ANALYZE records", token);
+        else await ExecAsync(run.Target == TargetKind.SqlServer ? "UPDATE STATISTICS records WITH FULLSCAN" : "ANALYZE records", token);
     }
     public async Task<DatasetDigest> DigestAsync(CancellationToken token)
     {
@@ -78,10 +65,10 @@ public sealed class SqlDatabase(RunCase run) : IDatabase
     public async Task<EngineMetadata> MetadataAsync(CancellationToken token)
     {
         await using var command = _admin!.CreateCommand();
-        command.CommandText = run.Target == TargetKind.Sqlite ? "SELECT sqlite_version()" : "SELECT VERSION()";
+        command.CommandText = SqlConnections.VersionQuery(run.Target);
         var version = Convert.ToString(await command.ExecuteScalarAsync(token))!;
         var settings = new Dictionary<string, string> { ["connections"] = "one dedicated SQL connection per logical client; pooling=false",
-            ["batch_transport"] = run.Target switch { TargetKind.PostgreSql => "binary COPY", TargetKind.Sqlite => "prepared INSERT in transaction", _ => "multi-row parameterized INSERT" },
+            ["batch_transport"] = run.Target switch { TargetKind.SqlServer => "SqlBulkCopy; one batch in internal transaction; constraints checked", TargetKind.PostgreSql => "binary COPY", TargetKind.Sqlite => "prepared INSERT in transaction", _ => "multi-row parameterized INSERT" },
             ["prepared_queries"] = "true", ["generator"] = DataGenerator.Version };
         if (run.Target == TargetKind.PostgreSql)
             foreach (var name in new[] { "synchronous_commit", "fsync", "shared_buffers", "max_connections" })
@@ -89,6 +76,14 @@ public sealed class SqlDatabase(RunCase run) : IDatabase
         else if (run.Target == TargetKind.Sqlite)
             foreach (var name in new[] { "journal_mode", "synchronous", "cache_size" })
             { command.CommandText = "PRAGMA " + name; settings[name] = Convert.ToString(await command.ExecuteScalarAsync(token))!; }
+        else if (run.Target == TargetKind.SqlServer)
+        {
+            command.CommandText = "SELECT recovery_model_desc, delayed_durability_desc, is_read_committed_snapshot_on FROM sys.databases WHERE name=DB_NAME()";
+            await using var reader = await command.ExecuteReaderAsync(token); await reader.ReadAsync(token);
+            settings["recovery_model"] = reader.GetString(0); settings["delayed_durability"] = reader.GetString(1);
+            settings["read_committed_snapshot"] = reader.GetBoolean(2).ToString();
+            settings["edition"] = "Developer (testing only)";
+        }
         else
             foreach (var name in new[] { "innodb_flush_log_at_trx_commit", "innodb_buffer_pool_size", "max_connections" })
             { command.CommandText = "SELECT @@GLOBAL." + name; settings[name] = Convert.ToString(await command.ExecuteScalarAsync(token))!; }
@@ -100,8 +95,7 @@ public sealed class SqlDatabase(RunCase run) : IDatabase
         try
         {
             await connection.OpenAsync(token);
-            if (run.Target == TargetKind.Sqlite)
-            { await using var command = connection.CreateCommand(); command.CommandText = "PRAGMA synchronous=FULL; PRAGMA busy_timeout=10000"; await command.ExecuteNonQueryAsync(token); }
+            await SqlConnections.ConfigureAsync(connection, run.Target, false, token);
             var session = new SqlSession(connection);
             await session.PrepareCommandsAsync(token);
             return session;
@@ -126,7 +120,8 @@ internal sealed class SqlSession(DbConnection connection, bool maintenance = fal
             [Scenario.Insert] = "INSERT INTO records(id,group_id,amount_cents,version,payload) VALUES(@id,@group_id,@amount,@version,@payload)"
         })
         {
-            var cmd = connection.CreateCommand(); cmd.CommandText = sql; cmd.CommandTimeout = 10;
+            var cmd = connection.CreateCommand(); cmd.CommandText = connection is SqlConnection && scenario == Scenario.RangeRead
+                ? "SELECT TOP (100) id,group_id,amount_cents,version,payload FROM records WHERE id>=@id ORDER BY id" : sql; cmd.CommandTimeout = 10;
             Add(cmd, "@id", 0L, scenario == Scenario.Aggregate ? DbType.Int32 : DbType.Int64);
             if (scenario == Scenario.Insert)
             { Add(cmd, "@group_id", 0, DbType.Int32); Add(cmd, "@amount", 0L, DbType.Int64); Add(cmd, "@version", 0L, DbType.Int64); Add(cmd, "@payload", "", DbType.String); }
@@ -135,7 +130,7 @@ internal sealed class SqlSession(DbConnection connection, bool maintenance = fal
         }
     }
     private static void Add(DbCommand command, string name, object value, DbType type)
-    { var p = command.CreateParameter(); p.ParameterName = name; p.DbType = type; p.Value = value; command.Parameters.Add(p); }
+    { var p = command.CreateParameter(); p.ParameterName = name; p.DbType = type; p.Value = value; if (p is SqlParameter && type == DbType.String) p.Size = -1; command.Parameters.Add(p); }
 
     public async ValueTask<long> ExecuteAsync(Scenario scenario, long key, DataRow? row, DataRow[]? batch, CancellationToken token)
     {
@@ -180,6 +175,17 @@ internal sealed class SqlSession(DbConnection connection, bool maintenance = fal
                 await importer.WriteAsync(row.Payload, NpgsqlDbType.Text, token);
             }
             await importer.CompleteAsync(token);
+        }
+        else if (connection is SqlConnection server)
+        {
+            using var table = new DataTable();
+            table.Columns.Add("id", typeof(long)); table.Columns.Add("group_id", typeof(int)); table.Columns.Add("amount_cents", typeof(long));
+            table.Columns.Add("version", typeof(long)); table.Columns.Add("payload", typeof(string));
+            foreach (var row in rows) table.Rows.Add(row.Id, row.GroupId, row.AmountCents, row.Version, row.Payload);
+            using var bulk = new SqlBulkCopy(server, SqlBulkCopyOptions.UseInternalTransaction | SqlBulkCopyOptions.CheckConstraints | SqlBulkCopyOptions.KeepNulls, null)
+                { DestinationTableName = "records", BatchSize = rows.Length, BulkCopyTimeout = maintenance ? 600 : 10 };
+            foreach (DataColumn column in table.Columns) bulk.ColumnMappings.Add(column.ColumnName, column.ColumnName);
+            await bulk.WriteToServerAsync(table, token);
         }
         else if (connection is SqliteConnection)
         {

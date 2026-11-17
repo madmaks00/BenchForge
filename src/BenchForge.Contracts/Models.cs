@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace BenchForge.Contracts;
 
-public enum TargetKind { PostgreSql, MySql, MariaDb, MongoDb, Redis, Valkey, ClickHouse, Sqlite }
+public enum TargetKind { PostgreSql, MySql, MariaDb, MongoDb, Redis, Valkey, ClickHouse, Sqlite, SqlServer }
 public enum Scenario { PointRead, RangeRead, Aggregate, AnalyticalScan, Update, Mixed, Insert, BatchInsert, Delete }
 public enum LoadModel { ClosedLoop, ConstantRate }
 
@@ -35,7 +35,8 @@ public static class Catalog
         new(TargetKind.Valkey, "Valkey", "Ключи / память", "valkey/valkey:9", 6379, Cache),
         new(TargetKind.ClickHouse, "ClickHouse", "Аналитика", "clickhouse/clickhouse-server:26.8", 8123,
             [Scenario.RangeRead, Scenario.Aggregate, Scenario.AnalyticalScan, Scenario.BatchInsert]),
-        new(TargetKind.Sqlite, "SQLite", "Встраиваемая", "", 0, Oltp)
+        new(TargetKind.Sqlite, "SQLite", "Встраиваемая", "", 0, Oltp),
+        new(TargetKind.SqlServer, "SQL Server", "Реляционная · C#", "mcr.microsoft.com/mssql/server:2025-latest", 1433, Oltp)
     ];
     public static TargetInfo Get(TargetKind kind) => Targets.Single(x => x.Kind == kind);
     public static string Name(Scenario scenario) => scenario switch
@@ -89,6 +90,14 @@ public sealed record BenchmarkConfig
             throw new ArgumentException("Лимит CPU базы должен помещаться в число CPU виртуальной машины.");
         if (Targets.Count == 0 || Targets.Distinct().Count() != Targets.Count || Targets.Any(t => !Enum.IsDefined(t)))
             throw new ArgumentException("Выберите СУБД без повторов.");
+        if (Targets.Contains(TargetKind.SqlServer))
+        {
+            if (EngineIds.Any(id => id != "csharp"))
+                throw new ArgumentException("SQL Server пока поддерживает только движок C#. Выберите C# или исключите SQL Server.");
+            if (MemoryMb < 2048) throw new ArgumentException("Для SQL Server нужно не менее 2048 МБ памяти контейнера.");
+            if (VirtualMachine is { } sqlVm && sqlVm.MemoryMb < (long)MemoryMb + 1024)
+                throw new ArgumentException("Для SQL Server выделите VM память контейнера плюс хотя бы 1024 МБ для системы и генератора.");
+        }
         if (DatasetRows.Count == 0 || DatasetRows.Count > 16 || DatasetRows.Distinct().Count() != DatasetRows.Count || DatasetRows.Any(n => n is < 100 or > 100_000_000))
             throw new ArgumentException("Объёмы данных: уникальные числа от 100 до 100 000 000 (до 16 значений).");
         if (Clients.Count == 0 || Clients.Count > 16 || Clients.Distinct().Count() != Clients.Count || Clients.Any(n => n < 1))

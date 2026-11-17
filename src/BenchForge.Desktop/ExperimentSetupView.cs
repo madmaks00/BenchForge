@@ -46,6 +46,7 @@ public sealed class ExperimentSetupView : UserControl
             if (_fields.TryGetValue("payload", out var payload)) payload.IsEnabled = !active;
             if (active) { _engines.Apply(["csharp"]); _selected.RemoveWhere(target => !SqlWorkload.Supports(target)); if (_selected.Count == 0) _selected.Add(TargetKind.Sqlite); }
             foreach (var (target, controls) in _databases) { controls.Button.IsEnabled = !active || SqlWorkload.Supports(target); PaintDatabase(target); }
+            _engines.SetSqlServerMode(_selected.Contains(TargetKind.SqlServer));
             _selection.Text = "Выбрано: " + _selected.Count;
         };
         var root = new Grid { RowDefinitions = new RowDefinitions { new(GridLength.Auto), _pageRow, new(GridLength.Auto), new(GridLength.Auto) } };
@@ -76,7 +77,7 @@ public sealed class ExperimentSetupView : UserControl
     }
     private Control BuildDatabases()
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,*"), RowDefinitions = new RowDefinitions("Auto,8,Auto,8,Auto,8,Auto") };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,12,*"), RowDefinitions = new RowDefinitions(string.Join(",8,", Enumerable.Repeat("Auto", (Catalog.Targets.Length + 1) / 2))) };
         for (var i = 0; i < Catalog.Targets.Length; i++)
         {
             var target = Catalog.Targets[i];
@@ -105,6 +106,7 @@ public sealed class ExperimentSetupView : UserControl
             {
                 if (!_selected.Remove(target.Kind)) _selected.Add(target.Kind);
                 PaintDatabase(target.Kind);
+                _engines.SetSqlServerMode(_selected.Contains(TargetKind.SqlServer));
                 _selection.Text = "Выбрано: " + _selected.Count;
                 _error.IsVisible = false;
             };
@@ -113,7 +115,7 @@ public sealed class ExperimentSetupView : UserControl
             grid.Children.Add(button);
         }
         return Ui.Scroll(Ui.Stack(14, Ui.Label("Выберите базы для тестирования", 18, Ui.Text, true), grid,
-            Ui.Label("Серверным базам нужен Docker в режиме Linux-контейнеров.", 13)));
+            Ui.Label("Серверным базам нужен Docker в режиме Linux-контейнеров. SQL Server: C#, Linux x64, минимум 2 ГБ RAM; Developer для тестирования, принимается EULA Microsoft.", 13)));
     }
 
     private void PaintDatabase(TargetKind target)
@@ -249,6 +251,7 @@ public sealed class ExperimentSetupView : UserControl
         _environment.ApplyRemote(config.RemoteServer);
         _engines.Apply(config.EngineIds);
         _custom.Apply(config.CustomWorkload, config.WorkloadDirectory);
+        _engines.SetSqlServerMode(_selected.Contains(TargetKind.SqlServer));
         _hotspot.IsChecked = config.Hotspot;
         _scenario.SelectedIndex = config.Scenarios.Count == 1 ? Array.IndexOf(Enum.GetValues<Scenario>(), config.Scenarios[0]) + 2 : config.Plan is null || config.Scenarios.Count > 1 ? 1 : 0;
         GoTo(_step);

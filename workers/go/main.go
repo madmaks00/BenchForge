@@ -35,19 +35,20 @@ type plan struct {
 	Stages []stage `json:"stages"`
 }
 type config struct {
-	MemoryMb  int      `json:"memoryMb"`
-	CpuLimit  float64  `json:"cpuLimit"`
-	Duration  float64  `json:"durationSeconds"`
-	Warmup    float64  `json:"warmupSeconds"`
-	Payload   int      `json:"payloadBytes"`
-	Batch     int      `json:"batchSize"`
-	Seed      uint64   `json:"seed"`
-	Hotspot   bool     `json:"hotspot"`
-	LoadModel string   `json:"loadModel"`
-	Rate      int      `json:"targetOpsPerSecond"`
-	MaxLag    float64  `json:"maxStartLagMs"`
-	Scenarios []string `json:"scenarios"`
-	Plan      *plan    `json:"plan"`
+	Custom    *sqlWorkload `json:"customWorkload"`
+	MemoryMb  int          `json:"memoryMb"`
+	CpuLimit  float64      `json:"cpuLimit"`
+	Duration  float64      `json:"durationSeconds"`
+	Warmup    float64      `json:"warmupSeconds"`
+	Payload   int          `json:"payloadBytes"`
+	Batch     int          `json:"batchSize"`
+	Seed      uint64       `json:"seed"`
+	Hotspot   bool         `json:"hotspot"`
+	LoadModel string       `json:"loadModel"`
+	Rate      int          `json:"targetOpsPerSecond"`
+	MaxLag    float64      `json:"maxStartLagMs"`
+	Scenarios []string     `json:"scenarios"`
+	Plan      *plan        `json:"plan"`
 }
 
 func (c *config) UnmarshalJSON(data []byte) error {
@@ -61,14 +62,15 @@ func (c *config) UnmarshalJSON(data []byte) error {
 }
 
 type runCase struct {
-	RunID    string   `json:"runId"`
-	Target   string   `json:"target"`
-	Rows     int64    `json:"rows"`
-	Clients  int      `json:"clients"`
-	Repeat   int      `json:"repeat"`
-	Config   config   `json:"config"`
-	Endpoint endpoint `json:"endpoint"`
-	Engine   string   `json:"engine"`
+	SqlProgram *sqlProgram `json:"sqlProgram"`
+	RunID      string      `json:"runId"`
+	Target     string      `json:"target"`
+	Rows       int64       `json:"rows"`
+	Clients    int         `json:"clients"`
+	Repeat     int         `json:"repeat"`
+	Config     config      `json:"config"`
+	Endpoint   endpoint    `json:"endpoint"`
+	Engine     string      `json:"engine"`
 }
 type command struct {
 	Protocol int      `json:"protocolVersion"`
@@ -233,7 +235,17 @@ func measure(run *runCase, sessions []*database, sequences []int64, deleted *ato
 					}
 				}
 				before := time.Now()
-				affected, err := sessions[index].execute(selected, key, one, batch)
+				var affected int64
+				var err error
+				if custom := sessions[index].custom; custom != nil {
+					origin := before
+					if rate != nil {
+						origin = scheduled
+					}
+					affected, err = custom.execute(key, origin)
+				} else {
+					affected, err = sessions[index].execute(selected, key, one, batch)
+				}
 				finish := time.Now()
 				if err == nil {
 					c.Success++
@@ -445,6 +457,9 @@ func benchmark(run *runCase) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 	defer db.close()
+	if run.Config.Custom != nil {
+		return benchmarkCustom(run, db)
+	}
 	metadata, err := db.metadata()
 	if err != nil {
 		return err
@@ -637,7 +652,7 @@ func main() {
 	}
 	emit(nil, "hello", map[string]any{"engine": "go", "runtime": runtimeVersion(), "generator": generator, "histogram": "binary128-us-v1"})
 	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 65536), 1048577)
+	scanner.Buffer(make([]byte, 65536), 64*1024*1024+1)
 	var run *runCase
 	code := 1
 	defer func() {

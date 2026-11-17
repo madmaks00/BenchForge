@@ -15,14 +15,24 @@ public sealed class WorkerProcess : IWorkerHost
     public Task CheckAsync(string engine, CancellationToken token) => WorkerCatalog.CheckAsync(engine, token);
     public async Task RunAsync(RunCase run, Func<WireEvent, Task> receive, CancellationToken token)
     {
+        using var compiler = new NativeSqlCompiler();
+        if (run.Config.CustomWorkload is { } workload && run.Engine != "csharp")
+        {
+            var program = await compiler.CompileAsync(run, token);
+            var settings = workload with { Schema = new(), AfterLoad = new(), Datasets = [], Operations = [], Checks = [] };
+            run = run with { SqlProgram = program, Config = run.Config with { CustomWorkload = settings } };
+        }
         var launch = WorkerCatalog.Resolve(run.Engine);
         var info = ProcessUtil.Info(launch.Executable, launch.Arguments);
         info.WorkingDirectory = launch.Directory;
         WorkerCatalog.ConfigureNativeLibraries(info, launch);
         info.RedirectStandardInput = true;
+        var command = JsonSerializer.Serialize(new WorkerCommand(1, "run", run), Json.Options);
+        if (System.Text.Encoding.UTF8.GetByteCount(command) > 64 * 1024 * 1024)
+            throw new InvalidDataException("Настройки запуска занимают больше 64 МБ. Сократите SQL-скрипты сценария.");
         using var process = Process.Start(info) ?? throw new InvalidOperationException("Не удалось запустить движок " + run.Engine);
         var stderr = process.StandardError.ReadToEndAsync();
-        await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new WorkerCommand(1, "run", run), Json.Options));
+        await process.StandardInput.WriteLineAsync(command);
         await process.StandardInput.FlushAsync();
         using var lifetime = new CancellationTokenSource();
         using var registration = token.Register(() => _ = Task.Run(async () =>

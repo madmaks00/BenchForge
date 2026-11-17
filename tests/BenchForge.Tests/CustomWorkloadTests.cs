@@ -142,7 +142,20 @@ public sealed class CustomWorkloadTests
     public void CustomWorkloadsRejectUnsupportedTargetsAndEngines()
     {
         Assert.Throws<ArgumentException>(() => (Config(WorkloadTemplates.Blank()) with { Targets = [TargetKind.MongoDb] }).Validate());
-        Assert.Throws<ArgumentException>(() => (Config(WorkloadTemplates.Blank()) with { EngineIds = ["go"] }).Validate());
+        Assert.Throws<ArgumentException>(() => (Config(WorkloadTemplates.Blank()) with { EngineIds = ["unknown"] }).Validate());
+        (Config(WorkloadTemplates.Blank()) with { EngineIds = Engines.All.Select(engine => engine.Id).ToList() }).Validate();
+    }
+
+    [Fact]
+    public void CompiledSqlKeepsTokenOrderRepeatedParametersAndDialectQuotes()
+    {
+        const string sql = "SELECT '@id', @id, @ID /* @ignored */, @@version, @other";
+        var types = new Dictionary<string, SqlValueType>(StringComparer.OrdinalIgnoreCase) { ["id"] = SqlValueType.Int32, ["other"] = SqlValueType.Text };
+        var pg = PortableSql.Command(sql, types, TargetKind.PostgreSql, "rust");
+        Assert.Equal(new[] { "id", "ID", "other" }, pg.Names);
+        Assert.Equal("SELECT '@id', CAST(CAST($1 AS TEXT) AS INTEGER), CAST(CAST($2 AS TEXT) AS INTEGER) /* @ignored */, @@version, CAST($3 AS TEXT)", pg.Sql);
+        Assert.Equal(new[] { "CREATE TABLE a (value TEXT DEFAULT ';')", "CREATE TABLE b (id INTEGER)" },
+            SqlScripts.PortableStatements("CREATE TABLE a (value TEXT DEFAULT ';'); CREATE TABLE b (id INTEGER);", TargetKind.Sqlite));
     }
 
     [Fact]

@@ -2,6 +2,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
+pub const ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 pub const GENERATOR: &str = "splitmix64-ascii-v1";
 pub struct Random(pub u64);
 impl Random {
@@ -36,9 +37,8 @@ pub struct Row {
 pub fn row(id: i64, seed: u64, size: usize) -> Row {
     let mut rng = Random(seed ^ (id as u64).wrapping_mul(0xd6e8feb86659fd93));
     let amount_cents = (rng.next() % 1000000) as i64 + 1;
-    let alphabet = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     let payload = (0..size)
-        .map(|_| alphabet[(rng.next() % 62) as usize] as char)
+        .map(|_| ALPHABET[(rng.next() % 62) as usize] as char)
         .collect();
     Row {
         id,

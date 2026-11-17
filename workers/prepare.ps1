@@ -65,7 +65,7 @@ try{
   Assert-OwnedPath $destination;Assert-OwnedPath $backup;Assert-OwnedPath $target
   if(Test-Path -LiteralPath $destination){Move-Item -LiteralPath $destination -Destination $backup}
   try{Move-Item -LiteralPath $target -Destination $destination}catch{if(Test-Path -LiteralPath $backup){Move-Item -LiteralPath $backup -Destination $destination};throw}
-  $entry.version='native-workers-v2'
+  $entry.version='native-workers-v3'
   $entries=@($entries|Where-Object {$_.engine -ne $id})+@($entry)
   $json=ConvertTo-Json -InputObject @($entries) -Depth 8
   $temporary=Join-Path $dist 'engines.json.tmp';[IO.File]::WriteAllText($temporary,$json,(New-Object Text.UTF8Encoding($false)))

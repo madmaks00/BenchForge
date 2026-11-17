@@ -182,6 +182,7 @@ def measure(
                     break
             before = time.perf_counter()
             try:
+                if hasattr(sessions[index], "stats"): sessions[index].scheduled = scheduled if rate else before
                 affected = sessions[index].execute(selected, key, one, batch)
                 finish = time.perf_counter()
                 c["success"] += 1
@@ -298,6 +299,9 @@ def benchmark():
         scenarios=[],
     )
     config.update(run["config"])
+    if config.get("customWorkload"):
+        from custom import benchmark as custom_benchmark
+        return custom_benchmark(run, config, measure, base, emit, check, cancel)
     target = run["target"]
     until = time.monotonic() + 90
     while True:
@@ -532,8 +536,9 @@ def main():
         ),
     )
     try:
-        line = sys.stdin.readline(1048577)
-        if not line or len(line) > 1048576:
+        limit = 64 * 1024 * 1024
+        line = sys.stdin.readline(limit + 1)
+        if not line or len(line) > limit:
             raise ValueError("Invalid command length")
         command = json.loads(line.lstrip("\ufeff"))
         if command.get("protocolVersion") != 1 or command.get("type") != "run":

@@ -29,6 +29,7 @@ function load() {
     destroyPrepare: 'void duckdb_destroy_prepare(_Inout_ void **statement)',
     bindInt:
       'int duckdb_bind_int64(void *statement, uint64_t index, int64_t value)',
+    bindNull: 'int duckdb_bind_null(void *statement, uint64_t index)',
     bindText:
       'int duckdb_bind_varchar(void *statement, uint64_t index, str value)',
     execute: 'int duckdb_execute_prepared(void *statement, void *result)',
@@ -68,9 +69,9 @@ export class DuckDatabase {
     this.run(`SET memory_limit='${run.config.memoryMb ?? 512}MB'`);
     this.run(`SET threads=${Math.max(1, Math.ceil(run.config.cpuLimit ?? 2))}`);
   }
-  run(text, params = []) {
+  run(text, params = [], cache = true) {
     const a = this.api;
-    let statement = this.statements.get(text);
+    let statement = cache ? this.statements.get(text) : null;
     if (!statement) {
       statement = [null];
       if (a.prepare(this.connection[0], text, statement) !== 0) {
@@ -78,13 +79,15 @@ export class DuckDatabase {
         if (statement[0]) a.destroyPrepare(statement);
         throw Error(message);
       }
-      this.statements.set(text, statement);
+      if (cache) this.statements.set(text, statement);
     }
     params.forEach((v, i) => {
       const status =
-        typeof v === 'string'
-          ? a.bindText(statement[0], i + 1, v)
-          : a.bindInt(statement[0], i + 1, BigInt(v));
+        v === null
+          ? a.bindNull(statement[0], i + 1)
+          : typeof v === 'string'
+            ? a.bindText(statement[0], i + 1, v)
+            : a.bindInt(statement[0], i + 1, BigInt(v));
       if (status !== 0) throw Error('DuckDB parameter binding failed');
     });
     const result = Buffer.alloc(48);
@@ -100,9 +103,9 @@ export class DuckDatabase {
           }
           const p = a.value(result, j, i);
           try {
-            r.push(a.koffi.decode(p, 'char', -1));
+            r.push(p ? a.koffi.decode(p, 'char', -1) : null);
           } finally {
-            a.free(p);
+            if (p) a.free(p);
           }
         }
         rows.push(r);
@@ -110,6 +113,7 @@ export class DuckDatabase {
       return { rows, changed: Number(a.changed(result)) };
     } finally {
       a.destroy(result);
+      if (!cache) a.destroyPrepare(statement);
     }
   }
   closeSync() {

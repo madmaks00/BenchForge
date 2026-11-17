@@ -42,10 +42,9 @@ public sealed class ExperimentSetupView : UserControl
         _environment.ResumeRequested += options => ResumeRequested?.Invoke(options);
         _custom.ModeChanged += active =>
         {
-            _engines.SetCustomMode(active);
             _scenario.IsEnabled = !active;
             if (_fields.TryGetValue("payload", out var payload)) payload.IsEnabled = !active;
-            if (active) { _engines.Apply(["csharp"]); _selected.RemoveWhere(target => !SqlWorkload.Supports(target)); if (_selected.Count == 0) _selected.Add(TargetKind.Sqlite); }
+            if (active) { _selected.RemoveWhere(target => !SqlWorkload.Supports(target)); if (_selected.Count == 0) _selected.Add(TargetKind.Sqlite); }
             foreach (var (target, controls) in _databases) { controls.Button.IsEnabled = !active || SqlWorkload.Supports(target); PaintDatabase(target); }
             _selection.Text = "Выбрано: " + _selected.Count;
         };

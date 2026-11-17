@@ -8,6 +8,12 @@ import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 import { GENERATOR, Random, Histogram, row, vectors } from './portable.mjs';
 import { Database } from './adapters.mjs';
+import {
+  benchmarkCustom,
+  CustomSession,
+  detailResults,
+  mergeDetails,
+} from './custom.mjs';
 
 const scenarios = [
   'PointRead',
@@ -82,11 +88,12 @@ const emit = (run, type, data) =>
   );
 
 if (!isMainThread) {
-  const { run, index, shared, deletedShared } = workerData,
+  const { run, index, shared, deletedShared, scope } = workerData,
     flag = new Int32Array(shared),
     deleted = new BigInt64Array(deletedShared),
     config = { ...defaults, ...run.config };
   const db = await new Database(run).open();
+  const custom = scope ? new CustomSession(db, run, scope, index) : null;
   let sequence = 0;
   parentPort.postMessage({ type: 'ready' });
   parentPort.on('message', async (command) => {
@@ -96,6 +103,13 @@ if (!isMainThread) {
       return;
     }
     if (command.type !== 'measure') return;
+    if (custom) {
+      custom.details.clear();
+      if (command.scope) {
+        custom.state.completed = command.scope.completed;
+        custom.state.byOperation = command.scope.byOperation;
+      }
+    }
     const { operation, seconds, clients, rate, stage, start } = command,
       deadline = start + seconds,
       planned = Math.floor(seconds * (rate || 0));
@@ -179,7 +193,9 @@ if (!isMainThread) {
         }
         const before = clock();
         try {
-          const affected = await db.execute(selected, key, one, batch),
+          const affected = custom
+              ? await custom.execute(key, rate ? scheduled : before)
+              : await db.execute(selected, key, one, batch),
             finish = clock();
           c.success++;
           c.rows += affected;
@@ -214,6 +230,7 @@ if (!isMainThread) {
         service: c.service.snapshot(),
         end: c.end.snapshot(),
         failed: c.failed.snapshot(),
+        details: custom ? detailResults(custom.details) : undefined,
         finished: clock(),
       });
     } catch (e) {
@@ -237,11 +254,18 @@ if (!isMainThread) {
   input.on('close', () => Atomics.store(flag, 0, 1));
   input.on('line', (line) => {
     try {
-      if (line.length > 1048576) throw Error('Command too long');
+      if (Buffer.byteLength(line) > 64 * 1024 * 1024)
+        throw Error('Command too long');
       const command = JSON.parse(
         line.replace(/^\uFEFF/, ''),
         (key, value, context) =>
-          key === 'seed' ? BigInt(context.source) : value,
+          typeof value !== 'number'
+            ? value
+            : key === 'seed'
+              ? BigInt(context.source)
+              : key === 'min' || key === 'max'
+                ? context.source
+                : value,
       );
       if (command.protocolVersion !== 1) throw Error('Expected protocol v1');
       if (command.type === 'cancel') {
@@ -302,6 +326,17 @@ async function benchmark(run, flag) {
     }
   }
   try {
+    if (config.customWorkload) {
+      return await benchmarkCustom(run, db, config, {
+        check,
+        base: (phase) => base(run, phase),
+        emit: (type, data) => emit(run, type, data),
+        pool,
+        close,
+        measure,
+        cancelled: () => cancelled(flag),
+      });
+    }
     const metadata = await db.metadata();
     metadata.settings.effective_batch_size = String(batchSize(config));
     emit(run, 'metadata', metadata);
@@ -383,14 +418,19 @@ async function benchmark(run, flag) {
                 : 'RangeRead')),
     );
     let expected = run.rows;
-    async function pool(count) {
-      const clients = [],
-        deletedShared = new SharedArrayBuffer(8);
+    async function pool(count, scope = null, clients = []) {
+      const deletedShared = new SharedArrayBuffer(8);
       try {
-        for (let index = 0; index < count; index++) {
+        for (let index = clients.length; index < count; index++) {
           check();
           const worker = new Worker(new URL(import.meta.url), {
-            workerData: { run, index, shared: flag.buffer, deletedShared },
+            workerData: {
+              run,
+              index,
+              shared: flag.buffer,
+              deletedShared,
+              scope,
+            },
             stderr: true,
           });
           worker.stderr.on('data', (chunk) => process.stderr.write(chunk));
@@ -439,6 +479,7 @@ async function benchmark(run, flag) {
       rate,
       stage,
       progress,
+      scope = null,
     ) {
       const selected = clients.slice(0, count),
         started = clock() + 0.01,
@@ -467,6 +508,10 @@ async function benchmark(run, flag) {
               rate,
               stage,
               start: started,
+              scope: scope && {
+                completed: scope.completed,
+                byOperation: scope.byOperation,
+              },
             });
           }),
       );
@@ -536,6 +581,9 @@ async function benchmark(run, flag) {
         )
           ? affected / elapsed
           : null,
+        operationBreakdown: config.customWorkload
+          ? mergeDetails(values)
+          : undefined,
         serviceLatency: service.snapshot(),
         endToEndLatency: end.snapshot(),
         errorLatency: failed.snapshot(),

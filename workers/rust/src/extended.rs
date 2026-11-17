@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
-type Tds = tiberius::Client<Compat<tokio::net::TcpStream>>;
+pub(crate) type Tds = tiberius::Client<Compat<tokio::net::TcpStream>>;
 pub fn supports(t: &str) -> bool {
     matches!(
         t,
@@ -26,6 +26,7 @@ enum Sql {
 pub struct Extended {
     run: Arc<Run>,
     sql: Option<Sql>,
+    custom_prepared: std::collections::HashMap<String, postgres::Statement>,
     http: Option<reqwest::blocking::Client>,
 }
 fn number(v: &Value) -> Result<i64> {
@@ -132,6 +133,7 @@ impl Extended {
         let mut d = Self {
             run,
             sql: backend,
+            custom_prepared: std::collections::HashMap::new(),
             http,
         };
         if d.http.is_some() {
@@ -156,6 +158,66 @@ impl Extended {
             )?;
         }
         Ok(d)
+    }
+    pub fn custom_query(
+        &mut self,
+        text: &str,
+        values: &[Option<String>],
+        mode: &str,
+        cache: bool,
+        timeout: Duration,
+    ) -> Result<crate::custom_query::Answer> {
+        use crate::custom_query::{self as query, Answer};
+        match self.sql.as_mut().context("Missing SQL connection")? {
+            Sql::Duck(connection) => {
+                let args: Vec<Value> = values.iter().map(|value| json!(value)).collect();
+                let (rows, changed) = connection.query(text, &args)?;
+                if mode == "scalar" {
+                    let scalar = rows
+                        .first()
+                        .and_then(|row| row.first())
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    Ok(query::answer(scalar.clone(), i64::from(scalar.is_some())))
+                } else if mode == "nonQuery" {
+                    Ok(query::answer(None, changed as i64))
+                } else {
+                    Ok(query::answer(None, rows.len() as i64))
+                }
+            }
+            Sql::Cockroach(connection) => query::postgres(
+                connection,
+                &mut self.custom_prepared,
+                text,
+                values,
+                mode,
+                cache,
+            ),
+            Sql::Oracle(connection) => {
+                connection.set_call_timeout(Some(timeout))?;
+                let ready = |connection: &mut oracle::Connection, commit: bool| -> Result<Answer> {
+                    if commit {
+                        connection.commit()?;
+                    } else {
+                        connection.rollback()?;
+                    }
+                    connection.set_autocommit(true);
+                    Ok(query::answer(None, 0))
+                };
+                match text {
+                    "BEGIN" => {
+                        connection.set_autocommit(false);
+                        Ok(query::answer(None, 0))
+                    }
+                    "COMMIT" => ready(connection, true),
+                    "ROLLBACK" => ready(connection, false),
+                    _ => query::oracle(connection, text, values, mode),
+                }
+            }
+            Sql::Server { runtime, client } => {
+                runtime.block_on(query::tds(client, text, values, mode, timeout))
+            }
+        }
     }
     fn query(&mut self, text: &str, args: &[Value]) -> Result<(Vec<Vec<Value>>, u64)> {
         match self.sql.as_mut().context("Missing SQL connection")? {

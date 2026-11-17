@@ -217,7 +217,9 @@ public final class Worker {
                     }
                     long before = System.nanoTime();
                     try {
-                      long affected = sessions.get(client).execute(selected, key, one, batch),
+                      var session = sessions.get(client);
+                      if (session.custom != null) session.custom.scheduled = rate == null ? before : scheduled;
+                      long affected = session.execute(selected, key, one, batch),
                           finish = System.nanoTime();
                       c.success++;
                       c.rows += affected;
@@ -385,6 +387,7 @@ public final class Worker {
       }
     }
     try (var db = database) {
+      if (config.hasNonNull("customWorkload")) { new CustomSql().benchmark(db); return; }
       var metadata = (Map<String, Object>) db.metadata();
       ((Map<String, String>) metadata.get("settings"))
           .put("effective_batch_size", Integer.toString(batchSize()));

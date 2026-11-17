@@ -29,6 +29,7 @@ struct Api {
     prepare_error: unsafe extern "C" fn(Handle) -> *const c_char,
     destroy_prepare: unsafe extern "C" fn(*mut Handle),
     bind_int: unsafe extern "C" fn(Handle, u64, i64) -> u32,
+    bind_null: unsafe extern "C" fn(Handle, u64) -> u32,
     bind_text: unsafe extern "C" fn(Handle, u64, *const c_char) -> u32,
     execute: unsafe extern "C" fn(Handle, *mut DuckResult) -> u32,
     destroy: unsafe extern "C" fn(*mut DuckResult),
@@ -103,6 +104,7 @@ fn load() -> Result<()> {
             prepare_error: symbol!("duckdb_prepare_error"),
             destroy_prepare: symbol!("duckdb_destroy_prepare"),
             bind_int: symbol!("duckdb_bind_int64"),
+            bind_null: symbol!("duckdb_bind_null"),
             bind_text: symbol!("duckdb_bind_varchar"),
             execute: symbol!("duckdb_execute_prepared"),
             destroy: symbol!("duckdb_destroy_result"),
@@ -171,7 +173,9 @@ impl DuckConnection {
             })
         }
         for (i, v) in args.iter().enumerate() {
-            let status = if let Some(n) = v.as_i64() {
+            let status = if v.is_null() {
+                unsafe { (a.bind_null)(statement, (i + 1) as u64) }
+            } else if let Some(n) = v.as_i64() {
                 unsafe { (a.bind_int)(statement, (i + 1) as u64, n) }
             } else {
                 let s = CString::new(v.as_str().context("Unsupported DuckDB bind")?)?;

@@ -149,7 +149,7 @@ public sealed record BenchmarkConfig
 
 // Sent only through the private control pipe, never written to a benchmark report.
 public sealed record Endpoint(string Host, int Port, string Username, string Password, string Database, string? FilePath = null);
-public sealed record RunCase(string RunId, TargetKind Target, long Rows, int Clients, int Repeat, BenchmarkConfig Config, Endpoint Endpoint, string Engine = "csharp", string? InputDirectory = null);
+public sealed record RunCase(string RunId, TargetKind Target, long Rows, int Clients, int Repeat, BenchmarkConfig Config, Endpoint Endpoint, string Engine = "csharp", string? InputDirectory = null, NativeSqlProgram? SqlProgram = null);
 public sealed record WorkerCommand(int ProtocolVersion, string Type, RunCase? Run = null);
 public sealed record WireEvent(int ProtocolVersion, string Type, string RunId, JsonElement Data);
 

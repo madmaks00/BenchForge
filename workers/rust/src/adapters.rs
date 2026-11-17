@@ -815,8 +815,38 @@ fn sql(operation: &str, pg: bool) -> String {
 pub enum Database {
     Original(OriginalDatabase),
     Extended(crate::extended::Extended),
+    Custom(Box<crate::custom::Session>),
 }
 impl Database {
+    pub fn custom_query(
+        &mut self,
+        text: &str,
+        values: &[Option<String>],
+        mode: &str,
+        cache: bool,
+        timeout: Duration,
+    ) -> Result<crate::custom_query::Answer> {
+        match self {
+            Self::Original(d) => match &mut d.backend {
+                Backend::Sqlite(c) => {
+                    c.busy_timeout(timeout)?;
+                    crate::custom_query::sqlite(c, text, values, mode, cache)
+                }
+                Backend::Postgres(c) => crate::custom_query::postgres(
+                    c,
+                    &mut d.pg_statements,
+                    text,
+                    values,
+                    mode,
+                    cache,
+                ),
+                Backend::MySql(c) => crate::custom_query::mysql(c, text, values, mode, cache),
+                _ => bail!("Custom SQL requires a SQL target"),
+            },
+            Self::Extended(d) => d.custom_query(text, values, mode, cache, timeout),
+            Self::Custom(_) => bail!("Unexpected direct access to a custom session"),
+        }
+    }
     pub fn open(run: Arc<Run>) -> Result<Self> {
         if crate::extended::supports(&run.target) {
             Ok(Self::Extended(crate::extended::Extended::open(run)?))
@@ -828,42 +858,49 @@ impl Database {
         match self {
             Self::Original(d) => d.reset(),
             Self::Extended(d) => d.reset(),
+            Self::Custom(_) => bail!("Unexpected direct access to custom session"),
         }
     }
     pub fn batch(&mut self, rows: &[Row]) -> Result<()> {
         match self {
             Self::Original(d) => d.batch(rows),
             Self::Extended(d) => d.batch(rows),
+            Self::Custom(_) => bail!("Unexpected direct access to custom session"),
         }
     }
     pub fn prepare(&mut self) -> Result<()> {
         match self {
             Self::Original(d) => d.prepare(),
             Self::Extended(d) => d.prepare(),
+            Self::Custom(_) => bail!("Unexpected direct access to custom session"),
         }
     }
     pub fn digest(&mut self) -> Result<[i64; 3]> {
         match self {
             Self::Original(d) => d.digest(),
             Self::Extended(d) => d.digest(),
+            Self::Custom(_) => bail!("Unexpected direct access to custom session"),
         }
     }
     pub fn count(&mut self) -> Result<i64> {
         match self {
             Self::Original(d) => d.count(),
             Self::Extended(d) => d.count(),
+            Self::Custom(_) => bail!("Unexpected direct access to custom session"),
         }
     }
     pub fn metadata(&mut self) -> Result<Value> {
         match self {
             Self::Original(d) => d.metadata(),
             Self::Extended(d) => d.metadata(),
+            Self::Custom(_) => bail!("Unexpected direct access to custom session"),
         }
     }
     pub fn execute(&mut self, op: &str, key: i64, row: Option<&Row>, batch: &[Row]) -> Result<i64> {
         match self {
             Self::Original(d) => d.execute(op, key, row, batch),
             Self::Extended(d) => d.execute(op, key, row, batch),
+            Self::Custom(_) => bail!("Unexpected direct access to custom session"),
         }
     }
 }

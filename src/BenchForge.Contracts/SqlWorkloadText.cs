@@ -53,7 +53,7 @@ public static class SqlWorkloadText
         }
         return text.Append(sql, position, sql.Length - position).ToString();
     }
-    private static List<(int Start, int Length, string Name)> ParameterTokens(string sql)
+    public static List<(int Start, int Length, string Name)> ParameterTokens(string sql)
     {
         var names = new List<(int, int, string)>();
         for (var index = 0; index < sql.Length; index++)

@@ -167,7 +167,6 @@ public sealed record SqlWorkload
         Require(Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(this, Json.Options)) <= 512 * 1024, "Описание сценария больше 512 КБ; данные подключайте отдельными CSV/JSONL-файлами.");
         if (config is not null)
         {
-            Require(config.EngineIds.SequenceEqual(["csharp"]), "Свои SQL-сценарии сейчас выполняются движком C#. Другие языки доступны для стандартных тестов.");
             Require(config.Targets.All(Supports), "Свой SQL-сценарий поддерживает PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, DuckDB, Oracle и CockroachDB.");
         }
 

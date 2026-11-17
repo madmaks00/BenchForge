@@ -23,6 +23,7 @@ final class Database implements AutoCloseable {
   final String target, prefix;
   ExtendedDatabase extended;
   Connection sql;
+  CustomSql.Session custom;
   MongoClient mongo;
   MongoDatabase mongoDb;
   MongoCollection<Document> collection;
@@ -499,6 +500,7 @@ final class Database implements AutoCloseable {
   }
 
   long execute(String operation, long key, Row row, List<Row> batch) throws Exception {
+    if (custom != null) return custom.execute(key);
     if (extended != null) {
       return extended.execute(operation, key, row, batch);
     }

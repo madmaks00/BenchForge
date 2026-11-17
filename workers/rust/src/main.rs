@@ -1,4 +1,6 @@
 mod adapters;
+mod custom;
+mod custom_query;
 mod duckdb;
 mod extended;
 mod portable;
@@ -72,6 +74,7 @@ struct Config {
     max_start_lag_ms: f64,
     scenarios: Vec<String>,
     plan: Option<Plan>,
+    custom_workload: Option<custom::Workload>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -89,6 +92,7 @@ impl Default for Config {
             max_start_lag_ms: 20.,
             scenarios: vec![],
             plan: None,
+            custom_workload: None,
         }
     }
 }
@@ -104,6 +108,7 @@ struct Run {
     endpoint: Endpoint,
     #[serde(default)]
     engine: String,
+    sql_program: Option<custom::Program>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -225,10 +230,7 @@ fn measure(
         .as_ref()
         .and_then(|s| s["number"].as_u64())
         .unwrap_or(0);
-    let scenario = SCENARIOS
-        .iter()
-        .position(|s| *s == operation)
-        .context("Unknown scenario")?;
+    let scenario = SCENARIOS.iter().position(|s| *s == operation).unwrap_or(0);
     let gate = Arc::new(Barrier::new(clients + 1));
     let start = Arc::new(OnceLock::<Instant>::new());
     let live_success = Arc::new(AtomicU64::new(0));
@@ -335,7 +337,13 @@ fn measure(
                         }
                     }
                     let before = Instant::now();
-                    match database.execute(selected, key, one.as_ref(), &batch) {
+                    let operation_result = match database {
+                        Database::Custom(session) => {
+                            session.execute(key, if rate.is_some() { scheduled } else { before })
+                        }
+                        _ => database.execute(selected, key, one.as_ref(), &batch),
+                    };
+                    match operation_result {
                         Ok(affected) => {
                             let finish = Instant::now();
                             c.success += 1;
@@ -469,6 +477,9 @@ fn benchmark(run: Arc<Run>) -> Result<()> {
             }
         }
     };
+    if run.config.custom_workload.is_some() {
+        return custom::benchmark(run, database);
+    }
     let mut metadata = database.metadata()?;
     metadata["settings"]["effective_batch_size"] = json!(batch_size(&run.config).to_string());
     emit(Some(&run), "metadata", metadata)?;

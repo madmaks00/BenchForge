@@ -28,6 +28,7 @@ type duckAPI struct {
 	prepare        func(uintptr, string, *uintptr) int32
 	prepareError   func(uintptr) uintptr
 	destroyPrepare func(*uintptr)
+	bindNull       func(uintptr, uint64) int32
 	bindInt        func(uintptr, uint64, int64) int32
 	bindText       func(uintptr, uint64, string) int32
 	execute        func(uintptr, *duckResult) int32
@@ -90,7 +91,7 @@ func loadDuck() error {
 	}{
 		{"duckdb_open", &a.open}, {"duckdb_close", &a.close}, {"duckdb_connect", &a.connect}, {"duckdb_disconnect", &a.disconnect},
 		{"duckdb_prepare", &a.prepare}, {"duckdb_prepare_error", &a.prepareError}, {"duckdb_destroy_prepare", &a.destroyPrepare},
-		{"duckdb_bind_int64", &a.bindInt}, {"duckdb_bind_varchar", &a.bindText}, {"duckdb_execute_prepared", &a.execute},
+		{"duckdb_bind_null", &a.bindNull}, {"duckdb_bind_int64", &a.bindInt}, {"duckdb_bind_varchar", &a.bindText}, {"duckdb_execute_prepared", &a.execute},
 		{"duckdb_destroy_result", &a.destroy}, {"duckdb_result_error", &a.resultError}, {"duckdb_row_count", &a.rowCount},
 		{"duckdb_column_count", &a.columnCount}, {"duckdb_column_name", &a.columnName}, {"duckdb_rows_changed", &a.rowsChanged},
 		{"duckdb_value_varchar", &a.valueText}, {"duckdb_value_is_null", &a.valueNull}, {"duckdb_free", &a.free},
@@ -172,6 +173,8 @@ func (c *duckConn) run(text string, args []driver.NamedValue) ([][]driver.Value,
 	for i, arg := range args {
 		var status int32
 		switch v := arg.Value.(type) {
+		case nil:
+			status = a.bindNull(stmt, uint64(i+1))
 		case int64:
 			status = a.bindInt(stmt, uint64(i+1), v)
 		case string:

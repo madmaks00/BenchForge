@@ -26,6 +26,7 @@ import (
 var background = context.Background()
 
 type database struct {
+	custom     *customSession
 	extra      *extendedDatabase
 	run        *runCase
 	db         *sql.DB
@@ -632,6 +633,11 @@ func (d *database) execute(operation string, key int64, row *dataRow, batch []da
 	return n, err
 }
 func (d *database) close() {
+	if d.custom != nil {
+		for _, stmt := range d.custom.prepared {
+			stmt.Close()
+		}
+	}
 	if d.extra != nil {
 		d.extra.close()
 		return

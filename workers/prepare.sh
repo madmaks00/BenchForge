@@ -77,7 +77,7 @@ except BaseException:
  if backup.exists(): backup.rename(destination)
  raise
 executable,arguments=launch[engine]
-entries=[entry for entry in entries if entry['engine']!=engine]+[dict(engine=engine,executable=executable,arguments=arguments,version='native-workers-v2')]
+entries=[entry for entry in entries if entry['engine']!=engine]+[dict(engine=engine,executable=executable,arguments=arguments,version='native-workers-v3')]
 temporary=dist/'engines.json.tmp'
 temporary.write_text(json.dumps(entries,indent=2)+'\n')
 os.replace(temporary,manifest)

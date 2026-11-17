@@ -9,7 +9,7 @@ public sealed record WorkerBundle(string Engine, string Executable, string[] Arg
 
 public static class WorkerCatalog
 {
-    public const string BundleVersion = "native-workers-v2";
+    public const string BundleVersion = "native-workers-v3";
     public static string Platform => (OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "osx" : "linux")
         + "-" + RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
 

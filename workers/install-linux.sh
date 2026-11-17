@@ -59,5 +59,5 @@ for name in ['node.tar.xz', 'go.tar.gz']:
 PY
 # The guest coordinator invokes these runtimes directly.
 if has node; then ln -sf "$tools/node/bin/node" /usr/local/bin/node; fi
-printf '%s\n' native-workers-v2 > /etc/benchforge-workers
+printf '%s\n' native-workers-v3 > /etc/benchforge-workers
 sync

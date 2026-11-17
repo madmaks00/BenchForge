@@ -11,6 +11,7 @@ public sealed class ScalingChart : Control
     private TrendSeries[] _series = [];
     private MetricDescription _description = ReportAnalysis.Describe(AnalysisMetric.Rate, "PointRead");
     private bool _byRows;
+    private string? _resourceAxis;
     private IReadOnlyList<LoadStage>? _stages;
     private readonly List<(Point Position, string Tip)> _hits = [];
     public ScalingChart()
@@ -25,11 +26,11 @@ public sealed class ScalingChart : Control
         };
         PointerExited += (_, _) => ToolTip.SetTip(this, null);
     }
-    public void SetData(TrendSeries[] series, MetricDescription description, bool byRows)
-    { _stages = null; _series = series; _description = description; _byRows = byRows; UpdateHeight(); InvalidateVisual(); }
+    public void SetData(TrendSeries[] series, MetricDescription description, bool byRows, string? resourceAxis = null)
+    { _resourceAxis = resourceAxis; _stages = null; _series = series; _description = description; _byRows = byRows; UpdateHeight(); InvalidateVisual(); }
 
     public void SetStages(TrendSeries[] series, MetricDescription description, IReadOnlyList<LoadStage> stages)
-    { _stages = stages; _series = series; _description = description; UpdateHeight(); InvalidateVisual(); }
+    { _resourceAxis = null; _stages = stages; _series = series; _description = description; UpdateHeight(); InvalidateVisual(); }
     private void UpdateHeight()
     {
         var columns = Math.Max(1, (int)((Bounds.Width - 24) / 150));
@@ -48,7 +49,7 @@ public sealed class ScalingChart : Control
         if (xs.Length < 2)
         {
             ChartPalette.Text(context, "Нужны хотя бы два уровня", 16, 65, 18, width: Bounds.Width - 32);
-            ChartPalette.Text(context, _byRows ? "Задайте несколько объёмов, например 10 000 и 100 000 записей."
+            ChartPalette.Text(context, _resourceAxis is not null ? "Добавьте несколько уровней в разделе «Серия ресурсов»." : _byRows ? "Задайте несколько объёмов, например 10 000 и 100 000 записей."
                 : "Для роста используйте профиль «Рост нагрузки».", 16, 105, 13, Ui.Muted, Bounds.Width - 32);
             return;
         }
@@ -69,7 +70,7 @@ public sealed class ScalingChart : Control
         {
             if (i % labelStride != 0 && !(i == xs.Length - 1 && i % labelStride >= labelStride / 2d)) continue;
             var x = xs[i];
-            ChartPalette.Text(context, _stages is null && _byRows ? ReportAnalysis.Number(x, compact: true) : ReportAnalysis.Count((long)x), X(x) - 8, bottom + 10, 10, Ui.Muted, 75);
+            ChartPalette.Text(context, _stages is null && (_byRows || _resourceAxis is not null) ? ReportAnalysis.Number(x, compact: true) : ReportAnalysis.Count((long)x), X(x) - 8, bottom + 10, 10, Ui.Muted, 75);
         }
         foreach (var series in _series)
         {
@@ -81,7 +82,7 @@ public sealed class ScalingChart : Control
                     context.DrawLine(new Pen(color, 2.5), new Point(X(previous.X), Y(previous.Median)), position);
                 if (point.Repeats > 1) context.DrawLine(new Pen(color, 1), new Point(position.X, Y(point.Minimum)), new Point(position.X, Y(point.Maximum)));
                 context.DrawEllipse(color, new Pen(Ui.B(Ui.Surface), 1), position, 4.5, 4.5);
-                var condition = _stages is null ? (_byRows ? "Записей: " : "Клиентов: ") + ReportAnalysis.Count((long)point.X)
+                var condition = _stages is null ? (_resourceAxis is not null ? _resourceAxis + ": " : _byRows ? "Записей: " : "Клиентов: ") + ReportAnalysis.Number(point.X)
                     : $"{_stages[(int)point.X - 1].Name} · клиентов: {_stages[(int)point.X - 1].Clients}";
                 _hits.Add((position, series.Name + "\n" + condition
                     + "\n" + ReportAnalysis.Number(point.Median, _description.Unit) + "\nПовторов: " + point.Repeats));

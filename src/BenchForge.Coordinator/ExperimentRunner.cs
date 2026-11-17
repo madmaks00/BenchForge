@@ -72,7 +72,7 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
         Directory.CreateDirectory(folder);
         await ReportStore.SaveAsync(folder, report);
         var clientCounts = config.CaseClients();
-        var total = config.EngineIds.Count * config.Targets.Count * config.DatasetRows.Count * clientCounts.Count * config.Repeats;
+        var total = config.EngineIds.Count * config.Targets.Count * config.DatasetRows.Count * clientCounts.Count * config.Repeats * config.ResourceCases().Count;
         var completed = 0;
         update?.Invoke(new("started", Folder: folder, TotalCases: total));
         try
@@ -84,23 +84,26 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                 foreach (var engine in config.EngineIds.Skip((repeat - 1) % config.EngineIds.Count).Concat(config.EngineIds.Take((repeat - 1) % config.EngineIds.Count)))
                 foreach (var rows in config.DatasetRows)
                 foreach (var clients in clientCounts)
+                foreach (var resource in config.ResourceCases().Skip((repeat - 1) % config.ResourceCases().Count).Concat(config.ResourceCases().Take((repeat - 1) % config.ResourceCases().Count)))
                 {
+                    var caseConfig = config.ForResource(resource);
                     token.ThrowIfCancellationRequested();
                     var caseId = Guid.NewGuid().ToString("N");
                     var load = config.Plan is { } plan ? LoadPlan.Name(plan.Profile) : $"клиентов: {clients}";
                     var label = $"{Catalog.Get(target).Name} · {Engines.Name(engine)} · {rows:N0} {(config.CustomWorkload is null ? "записей" : "базовых строк")} · {load} · повтор {repeat}";
+                    if (resource is not null) label += " · " + resource.Label;
                     Log(label);
                     if (config.VirtualMachine is not null)
                     {
                         try
                         {
-                            var guest = await _virtualMachines.RunAsync(config with { EngineIds = [engine] }, target, rows, clients, caseId, folder, async change =>
+                            var guest = await _virtualMachines.RunAsync(caseConfig with { EngineIds = [engine] }, target, rows, clients, caseId, folder, async change =>
                             {
                                 if (change.Result is { } measured)
                                 {
                                     if (measured.Engine != engine || measured.Target != target || measured.DatasetRows != rows || measured.Repeat != 1 || !MatchesLoad(measured, config.Plan, clients))
                                         throw new InvalidDataException("Агент VM вернул результаты другого запуска.");
-                                    var result = measured with { Repeat = repeat };
+                                    var result = measured with { Repeat = repeat, Resource = resource };
                                     report.Results.Add(result);
                                     await ReportStore.SaveAsync(folder, report);
                                     update?.Invoke(new("result", Result: result, CompletedCases: completed, TotalCases: total));
@@ -108,7 +111,11 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                                 else if (change.Type is "log" or "progress")
                                     update?.Invoke(change with { CompletedCases = completed, TotalCases = total, Folder = folder });
                             }, token);
-                            foreach (var (key, metadata) in guest.Engines) report.Engines.Add(key, metadata);
+                            foreach (var (key, metadata) in guest.Engines)
+                            {
+                                if (resource is not null) { metadata.Settings["series_cpu_limit"] = resource.CpuLimit.ToString(System.Globalization.CultureInfo.InvariantCulture); metadata.Settings["series_memory_mb"] = resource.MemoryMb.ToString(System.Globalization.CultureInfo.InvariantCulture); }
+                                report.Engines.Add(key, metadata);
+                            }
                             report.Environment["host_os"] = RuntimeInformation.OSDescription;
                             foreach (var (key, value) in guest.Environment) report.Environment[key] = value;
                             report.Environment["topology"] = "fresh Linux VM per case cloned from a stopped template; database and worker inside VM; sequential cases";
@@ -132,13 +139,13 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                         token.ThrowIfCancellationRequested();
                         continue;
                     }
-                    var owned = new OwnedTarget(target, config, caseId, folder, Log);
+                    var owned = new OwnedTarget(target, caseConfig, caseId, folder, Log);
                     var resources = new ResourceCollector();
                     long phaseStart = Stopwatch.GetTimestamp();
                     try
                     {
                         await owned.StartAsync(token); resources.Start(owned.Container);
-                        var run = new RunCase(caseId, target, rows, clients, repeat, config, owned.Endpoint, engine, config.WorkloadDirectory);
+                        var run = new RunCase(caseId, target, rows, clients, repeat, caseConfig, owned.Endpoint, engine, config.WorkloadDirectory);
                         long? phaseEnd = null;
                         await _workerHost.RunAsync(run, async message =>
                         {
@@ -149,8 +156,9 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                                     if (metadata.Engine != engine) throw new InvalidDataException("Метаданные другого движка.");
                                     metadata.Settings["image_tag"] = Catalog.Embedded(target) ? "embedded" : config.Image(target);
                                     metadata.Settings["image_id"] = owned.ImageId ?? "embedded";
-                                    metadata.Settings["cpu_limit"] = Catalog.Embedded(target) ? "not isolated: worker process" : config.CpuLimit.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                                    metadata.Settings["memory_limit_mb"] = Catalog.Embedded(target) ? "not isolated: worker process" : config.MemoryMb.ToString();
+                                    metadata.Settings["cpu_limit"] = Catalog.Embedded(target) ? "not isolated: worker process" : caseConfig.CpuLimit.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                                    metadata.Settings["memory_limit_mb"] = Catalog.Embedded(target) ? "not isolated: worker process" : caseConfig.MemoryMb.ToString();
+                                    if (resource is not null) { metadata.Settings["series_cpu_limit"] = resource.CpuLimit.ToString(System.Globalization.CultureInfo.InvariantCulture); metadata.Settings["series_memory_mb"] = resource.MemoryMb.ToString(System.Globalization.CultureInfo.InvariantCulture); }
                                     report.Engines.Add(caseId, metadata); break;
                                 case "phase_start":
                                     phaseStart = Stopwatch.GetTimestamp(); phaseEnd = null;
@@ -160,7 +168,7 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
                                 case "phase_end":
                                     phaseEnd = Stopwatch.GetTimestamp(); break;
                                 case "result":
-                                    var result = message.Data.Deserialize<PhaseResult>(Json.Options)!;
+                                    var result = message.Data.Deserialize<PhaseResult>(Json.Options)! with { Resource = resource };
                                     if (result.Engine != engine || result.Target != target || result.DatasetRows != rows || result.Repeat != repeat || !MatchesLoad(result, config.Plan, clients))
                                         throw new InvalidDataException("Движок вернул результаты другого запуска.");
                                     if (!Catalog.Embedded(target)) result = result with { Server = resources.Summary(phaseStart, phaseEnd ?? Stopwatch.GetTimestamp()) };

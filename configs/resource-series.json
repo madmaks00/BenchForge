@@ -1,0 +1,40 @@
+{
+  "engines": [
+    "csharp"
+  ],
+  "targets": [
+    "postgreSql",
+    "mySql"
+  ],
+  "datasetRows": [
+    10000
+  ],
+  "clients": [
+    8
+  ],
+  "durationSeconds": 5,
+  "warmupSeconds": 2,
+  "repeats": 3,
+  "scenarios": [
+    "pointRead",
+    "mixed"
+  ],
+  "resourceSeries": [
+    {
+      "cpuLimit": 1,
+      "memoryMb": 1024
+    },
+    {
+      "cpuLimit": 2,
+      "memoryMb": 1024
+    },
+    {
+      "cpuLimit": 1,
+      "memoryMb": 2048
+    },
+    {
+      "cpuLimit": 2,
+      "memoryMb": 2048
+    }
+  ]
+}

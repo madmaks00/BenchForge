@@ -5,7 +5,7 @@ namespace BenchForge.Coordinator;
 
 public enum AnalysisMetric { Rate, P99, ServerMemory, ClientMemory, ServerCpu, ClientCpu, GcPause, ErrorPercent, DropPercent, EndToEndP99 }
 public enum MetricDirection { Higher, Lower, Context }
-public sealed record ReportSlice(string Phase, long Rows, int Clients, int? StageNumber = null, string? Engine = null, TargetKind? Target = null);
+public sealed record ReportSlice(string Phase, long Rows, int Clients, int? StageNumber = null, string? Engine = null, TargetKind? Target = null, ResourceLimits? Resource = null);
 public sealed record MetricDescription(string Title, string Unit, MetricDirection Direction, string Explanation);
 public sealed record SeriesAnalysis(string Id, string Engine, TargetKind Target, string Name, double? Median, double? Minimum,
     double? Maximum, double[] Values, int ValidRepeats, int TotalRepeats, long Errors, long Dropped, string MissingReason);
@@ -184,10 +184,20 @@ public static class ReportAnalysis
         return GroupTrend(eligible, metric, row => byRows ? row.DatasetRows : row.Clients);
     }
 
+    public static TrendSeries[] ResourceTrends(IReadOnlyList<PhaseResult> results, ReportSlice slice, AnalysisMetric metric, bool byMemory)
+    {
+        var eligible = results.Where(row => row.Resource is not null && Valid(row) && row.Phase == slice.Phase && row.DatasetRows == slice.Rows &&
+            row.Clients == slice.Clients && row.Stage?.Number == slice.StageNumber && IdentityMatches(row, slice with { Resource = row.Resource })).ToArray();
+        return eligible.GroupBy(row => byMemory ? row.Resource!.CpuLimit : row.Resource!.MemoryMb).SelectMany(group =>
+            GroupTrend(group.ToArray(), metric, row => byMemory ? row.Resource!.MemoryMb : row.Resource!.CpuLimit)
+                .Select(series => series with { Id = series.Id + ":resource:" + group.Key,
+                    Name = series.Name + (byMemory ? $" · {group.Key:g} CPU" : $" · {group.Key:N0} МБ") })).ToArray();
+    }
+
     public static bool Matches(PhaseResult result, ReportSlice slice) => result.Phase == slice.Phase && result.DatasetRows == slice.Rows &&
         result.Clients == slice.Clients && result.Stage?.Number == slice.StageNumber && IdentityMatches(result, slice);
 
-    public static bool IdentityMatches(PhaseResult result, ReportSlice slice) => (slice.Engine is null || result.Engine == slice.Engine) && (slice.Target is null || result.Target == slice.Target);
+    public static bool IdentityMatches(PhaseResult result, ReportSlice slice) => (slice.Engine is null || result.Engine == slice.Engine) && (slice.Target is null || result.Target == slice.Target) && result.Resource == slice.Resource;
 
     public static TrendSeries[] StageTrends(IReadOnlyList<PhaseResult> results, ReportSlice slice, AnalysisMetric metric)
     {

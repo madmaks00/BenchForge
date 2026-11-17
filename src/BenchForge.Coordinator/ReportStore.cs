@@ -13,13 +13,13 @@ public static class ReportStore
         return data.Length == 0 ? null : data.Length % 2 == 1 ? data[data.Length / 2] : (data[data.Length / 2 - 1] + data[data.Length / 2]) / 2;
     }
     public static List<SummaryRow> Summarize(IEnumerable<PhaseResult> results) => results.Where(r => r.Verified && !r.Cancelled && r.Errors == 0)
-        .GroupBy(r => (r.Engine, r.Target, r.DatasetRows, r.Clients, r.Phase, r.Unit, r.Stage)).Select(group =>
+        .GroupBy(r => (r.Engine, r.Target, r.DatasetRows, r.Clients, r.Phase, r.Unit, r.Stage, r.Resource)).Select(group =>
         {
             var rates = group.Select(r => r.Unit == "rows/s" ? r.RowsPerSecond : r.Unit == "seconds" ? r.ElapsedSeconds : r.OperationsPerSecond).Where(x => x.HasValue).ToArray();
             return new SummaryRow(group.Key.Engine, group.Key.Target, group.Key.DatasetRows, group.Key.Clients, group.Key.Phase, group.Key.Unit,
                 group.Count(), Median(rates), rates.Length == 0 ? null : rates.Min(), rates.Length == 0 ? null : rates.Max(),
                 Median(group.Select(r => r.ServiceLatency?.P95Ms)), Median(group.Select(r => r.ServiceLatency?.P99Ms)),
-                Median(group.Select(r => r.Client?.RssSampledMaxMb)), Median(group.Select(r => r.Server?.MemorySampledMaxMb)), group.Key.Stage);
+                Median(group.Select(r => r.Client?.RssSampledMaxMb)), Median(group.Select(r => r.Server?.MemorySampledMaxMb)), group.Key.Stage, group.Key.Resource);
         }).ToList();
 
     public static async Task SaveAsync(string folder, BenchmarkReport report)
@@ -28,7 +28,7 @@ public static class ReportStore
         var temporary = Path.Combine(folder, "report.json.tmp");
         await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(report, Json.Pretty));
         File.Move(temporary, Path.Combine(folder, "report.json"), overwrite: true);
-        var csv = new StringBuilder("engine,target,rows,clients,repeat,phase,unit,seconds,operations,rows_affected,ops_per_second,rows_per_second,p50_ms,p95_ms,p99_ms,end_to_end_p99_ms,errors,dropped,planned,verified,cancelled,client_cpu_percent,client_rss_mb,gc_pause_ms,allocated_bytes,server_rss_mb,server_cpu_percent,server_read_mb,server_written_mb,resource_samples,stage_number,stage,stage_target_seconds,target_ops_per_second\n");
+        var csv = new StringBuilder("engine,target,rows,clients,repeat,phase,unit,seconds,operations,rows_affected,ops_per_second,rows_per_second,p50_ms,p95_ms,p99_ms,end_to_end_p99_ms,errors,dropped,planned,verified,cancelled,client_cpu_percent,client_rss_mb,gc_pause_ms,allocated_bytes,server_rss_mb,server_cpu_percent,server_read_mb,server_written_mb,resource_samples,stage_number,stage,stage_target_seconds,target_ops_per_second,cpu_limit,memory_limit_mb\n");
         foreach (var r in report.Results)
         {
             var fields = new object?[] { r.Engine, r.Target, r.DatasetRows, r.Clients, r.Repeat, r.Phase, r.Unit, r.ElapsedSeconds,
@@ -36,19 +36,19 @@ public static class ReportStore
                 r.ServiceLatency?.P95Ms, r.ServiceLatency?.P99Ms, r.EndToEndLatency?.P99Ms, r.Errors, r.Dropped, r.PlannedOperations,
                 r.Verified, r.Cancelled, r.Client?.CpuPercent, r.Client?.RssSampledMaxMb, r.Client?.GcPauseMs, r.Client?.AllocatedBytes,
                 r.Server?.MemorySampledMaxMb, r.Server?.CpuMeanPercent, r.Server?.ReadMb, r.Server?.WrittenMb, r.Server?.Samples,
-                r.Stage?.Number, r.Stage?.Name, r.Stage?.TargetSeconds, r.Stage?.OperationsPerSecond };
+                r.Stage?.Number, r.Stage?.Name, r.Stage?.TargetSeconds, r.Stage?.OperationsPerSecond, r.Resource?.CpuLimit ?? report.Config.CpuLimit, r.Resource?.MemoryMb ?? report.Config.MemoryMb };
             csv.AppendLine(string.Join(',', fields.Select(Value)));
         }
         await File.WriteAllTextAsync(Path.Combine(folder, "results.csv"), csv.ToString(), new UTF8Encoding(true));
         await File.WriteAllTextAsync(Path.Combine(folder, "summary.json"), JsonSerializer.Serialize(report.Summary, Json.Pretty));
         if (report.Config.CustomWorkload is not null)
         {
-            var operations = new StringBuilder("engine,target,base_rows,clients,repeat,phase,stage_number,operation_id,operation_name,successful,rows_affected,errors,p50_ms,p95_ms,p99_ms,end_to_end_p99_ms,verified,cancelled\n");
+            var operations = new StringBuilder("engine,target,base_rows,clients,repeat,phase,stage_number,operation_id,operation_name,successful,rows_affected,errors,p50_ms,p95_ms,p99_ms,end_to_end_p99_ms,verified,cancelled,cpu_limit,memory_limit_mb\n");
             foreach (var row in report.Results)
             foreach (var detail in row.OperationBreakdown ?? [])
                 operations.AppendLine(string.Join(',', new object?[] { row.Engine, row.Target, row.DatasetRows, row.Clients, row.Repeat, row.Phase, row.Stage?.Number,
                     detail.Id, detail.Name, detail.SuccessfulOperations, detail.SuccessfulRows, detail.Errors, detail.ServiceLatency.P50Ms, detail.ServiceLatency.P95Ms,
-                    detail.ServiceLatency.P99Ms, detail.EndToEndLatency.P99Ms, row.Verified, row.Cancelled }.Select(Value)));
+                    detail.ServiceLatency.P99Ms, detail.EndToEndLatency.P99Ms, row.Verified, row.Cancelled, row.Resource?.CpuLimit ?? report.Config.CpuLimit, row.Resource?.MemoryMb ?? report.Config.MemoryMb }.Select(Value)));
             await File.WriteAllTextAsync(Path.Combine(folder, "operations.csv"), operations.ToString(), new UTF8Encoding(true));
         }
     }

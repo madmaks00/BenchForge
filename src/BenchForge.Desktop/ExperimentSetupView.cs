@@ -24,6 +24,7 @@ public sealed class ExperimentSetupView : UserControl
     private readonly StackPanel _review = Ui.Stack(20);
     private readonly TextBlock _checkStatus = Ui.Label("");
     private readonly LoadPlanEditor _load = new();
+    private readonly ResourceSeriesSettings _resourceSeries = new();
     private readonly VirtualMachineSettings _environment = new();
     private readonly EngineSettings _engines = new();
     private readonly CustomWorkloadSettings _custom = new();
@@ -142,6 +143,7 @@ public sealed class ExperimentSetupView : UserControl
         advanced.Margin = new Thickness(0, 20, 0, 8);
         return Ui.Scroll(Ui.Stack(16, _custom, _load, workload,
             new Expander { Header = "Движки нагрузки", Content = Ui.Card(_engines, 16) },
+            new Expander { Header = "Серия ресурсов", Content = Ui.Card(_resourceSeries, 16) },
             new Expander { Header = "Дополнительные параметры", Content = advanced },
             new Expander { Header = "Окружение тестирования", Content = Ui.Card(_environment, 16) }));
     }
@@ -185,11 +187,12 @@ public sealed class ExperimentSetupView : UserControl
         var environmentText = config.RemoteServer is not null ? "Генератор и база работают на сервере. ПК получает прогресс и отчёт. Разрыв связи не останавливает запущенное задание."
             : config.VirtualMachine is { } vm ? $"Шаблон {vm.Template}\nМашина: {vm.Cpus} CPU · {vm.MemoryMb:N0} МБ RAM · {vm.DiskGb} ГБ диск"
             : config.Targets.All(Catalog.Embedded) ? "База работает внутри генератора нагрузки." : $"На каждую серверную базу: {config.CpuLimit:g} CPU, {config.MemoryMb:N0} МБ памяти.\nЕсли Docker Desktop выключен, BenchForge запустит его перед тестом и дождётся готовности.";
+        if (config.ResourceSeries.Count > 0) environmentText += "\nСерия: " + string.Join(" / ", config.ResourceSeries.Select(resource => resource.Label));
         var conditions = Ui.Stack(18, Ui.Label("Окружение", 17, Ui.Text, true),
             Ui.Label(environmentTitle, 14, Ui.Text), Ui.Label(environmentText), check, _checkStatus);
         var save = Ui.Button("Сохранить настройки", "quiet", () => SaveRequested?.Invoke(ReadConfig())); save.HorizontalAlignment = HorizontalAlignment.Left;
         _review.Children.Add(Ui.Columns("1.6*,20,*", Ui.Card(summary), Ui.Card(conditions)));
-        var seconds = (config.CustomWorkload is { } own ? config.Targets.Count * WorkloadPhases.Units(own).Count() : config.Targets.Sum(target => config.Operations(target).Count)) * plan.Seconds * config.Repeats * config.DatasetRows.Count * config.EngineIds.Count;
+        var seconds = (config.CustomWorkload is { } own ? config.Targets.Count * WorkloadPhases.Units(own).Count() : config.Targets.Sum(target => config.Operations(target).Count)) * plan.Seconds * config.Repeats * config.DatasetRows.Count * config.EngineIds.Count * config.ResourceCases().Count;
         _review.Children.Add(Ui.Label($"Время самих измерений по плану: {TimeSpan.FromSeconds(seconds):g}. Подготовка баз и проверка данных займут дополнительное время.", 13));
         var skipped = config.Targets.Where(t => config.Operations(t).Count == 0).Select(t => Catalog.Get(t).Name).ToArray();
         if (skipped.Length > 0) _review.Children.Add(Ui.Label($"Выбранная операция недоступна для {string.Join(", ", skipped)}. Для них будет только подготовка набора.", 13, Ui.Amber));
@@ -230,7 +233,7 @@ public sealed class ExperimentSetupView : UserControl
         var plan = _load.Read();
         var operations = _scenario.SelectedIndex switch { <= 0 => [], 1 => Enum.GetValues<Scenario>().ToList(), _ => new List<Scenario> { Enum.GetValues<Scenario>()[_scenario.SelectedIndex - 2] } };
         var config = new BenchmarkConfig {
-            EngineIds = _engines.Read(),
+            EngineIds = _engines.Read(), ResourceSeries = _resourceSeries.Read(),
             Targets = _selected.Order().ToList(), DatasetRows = F("rows").Split(',').Select(x => long.TryParse(x.Trim(), out var n) ? n : throw new ArgumentException("Объёмы: целые числа через запятую.")).ToList(),
             Clients = [plan.PeakClients], Plan = plan, DurationSeconds = plan.Stages[0].Seconds,
             Repeats = Integer("repeats"), PayloadBytes = Integer("payload"), BatchSize = Integer("batch"),
@@ -248,7 +251,7 @@ public sealed class ExperimentSetupView : UserControl
             ["batch"] = config.BatchSize.ToString(), ["warmup"] = config.WarmupSeconds.ToString(CultureInfo.InvariantCulture), ["seed"] = config.Seed.ToString(),
             ["cpu"] = config.CpuLimit.ToString(CultureInfo.InvariantCulture), ["memory"] = config.MemoryMb.ToString() };
         foreach (var (key, value) in values) _fields[key].Text = value;
-        _load.Apply(config);
+        _load.Apply(config); _resourceSeries.Apply(config.ResourceSeries);
         _environment.Apply(config.VirtualMachine);
         _environment.ApplyRemote(config.RemoteServer);
         _engines.Apply(config.EngineIds);

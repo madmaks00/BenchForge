@@ -75,6 +75,9 @@ public sealed record BenchmarkConfig
     public LoadModel LoadModel { get; init; } = LoadModel.ClosedLoop;
     public int TargetOpsPerSecond { get; init; } = 1000;
     public double MaxStartLagMs { get; init; } = 20;
+    public List<ResourceLimits> ResourceSeries { get; init; } = [];
+    public IReadOnlyList<ResourceLimits?> ResourceCases() => ResourceSeries.Count == 0 ? [null] : ResourceSeries.Cast<ResourceLimits?>().ToArray();
+    public BenchmarkConfig ForResource(ResourceLimits? resource) => resource is null ? this : this with { CpuLimit = resource.CpuLimit, MemoryMb = resource.MemoryMb, ResourceSeries = [] };
     public double CpuLimit { get; init; } = 2;
     public int MemoryMb { get; init; } = 2048;
     public Dictionary<TargetKind, string> ImageOverrides { get; init; } = [];
@@ -88,6 +91,14 @@ public sealed record BenchmarkConfig
 
     public void Validate()
     {
+        if (ResourceSeries is null || ResourceSeries.Any(resource => resource is null) || ResourceSeries.Distinct().Count() != ResourceSeries.Count)
+            throw new ArgumentException("В серии ресурсов нужны разные сочетания CPU и памяти.");
+        if (ResourceSeries.Count > 0)
+        {
+            if (Targets.Contains(TargetKind.Sqlite)) throw new ArgumentException("SQLite работает внутри генератора без отдельных лимитов CPU/RAM. Для серии ресурсов выберите серверные базы или DuckDB.");
+            foreach (var resource in ResourceSeries) ForResource(resource).Validate();
+            return;
+        }
         if (EngineIds is null || EngineIds.Count == 0 || EngineIds.Distinct().Count() != EngineIds.Count || EngineIds.Any(id => !Engines.All.Any(engine => engine.Id == id)))
             throw new ArgumentException("Выберите движки без повторов: C#, Java, Python, Rust, Node.js или Go.");
         VirtualMachine?.Validate();
@@ -167,6 +178,7 @@ public sealed record PhaseResult
     public int Repeat { get; init; }
     public string Phase { get; init; } = "";
     public LoadStageResult? Stage { get; init; }
+    public ResourceLimits? Resource { get; init; }
     public string Unit { get; init; } = "ops/s";
     public double ElapsedSeconds { get; init; }
     public long SuccessfulOperations { get; init; }
@@ -190,7 +202,7 @@ public sealed record PhaseResult
 
 public sealed record SummaryRow(string Engine, TargetKind Target, long DatasetRows, int Clients, string Phase, string Unit,
     int ValidRepeats, double? MedianRate, double? MinRate, double? MaxRate, double? MedianP95Ms, double? MedianP99Ms,
-    double? MedianClientRssMb, double? MedianServerRssMb, LoadStageResult? Stage = null);
+    double? MedianClientRssMb, double? MedianServerRssMb, LoadStageResult? Stage = null, ResourceLimits? Resource = null);
 
 public sealed class BenchmarkReport
 {

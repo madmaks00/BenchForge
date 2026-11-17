@@ -71,7 +71,7 @@ public static class ComparisonQuality
 
         foreach (var item in observed)
         {
-            var metadata = MetadataFor(report, results, item).ToArray();
+            var metadata = MetadataFor(report, results, item, slice.Resource).ToArray();
             if (metadata.Length == 0)
                 Add("metadata_unavailable", item.Name + ": версии и лимиты не удалось связать с измерениями этого отчёта.",
                     "Проверка использует сохранённые значения. Отсутствие предупреждения об изменениях не подтверждает одинаковые настройки.", false);
@@ -147,13 +147,14 @@ public static class ComparisonQuality
     { TargetKind.Sqlite => "встроенная БД", TargetKind.DuckDb => "встроенная аналитическая БД",
         TargetKind.Elasticsearch or TargetKind.OpenSearch => "поисковая БД", TargetKind.CockroachDb => "SQL без репликации (1 узел)", TargetKind.Oracle => "серверная БД в редакции Free", TargetKind.Redis or TargetKind.Valkey => "кеш в памяти", TargetKind.ClickHouse => "аналитическая БД", _ => "серверная БД" };
 
-    private static IEnumerable<EngineMetadata> MetadataFor(BenchmarkReport report, IReadOnlyList<PhaseResult> results, SeriesAnalysis item)
+    private static IEnumerable<EngineMetadata> MetadataFor(BenchmarkReport report, IReadOnlyList<PhaseResult> results, SeriesAnalysis item, ResourceLimits? resource)
     {
         var targets = report.Config.Targets.Concat(results.Select(row => row.Target)).Distinct().ToArray();
         string Image(TargetKind target) => Catalog.Embedded(target) ? "embedded" : report.Config.Image(target);
         var image = Image(item.Target);
         if (targets.Count(target => Image(target) == image) != 1) return [];
         return report.Engines.Values.Where(entry => entry.Engine == item.Engine && entry.Settings is not null &&
+            (resource is null || entry.Settings.GetValueOrDefault("series_cpu_limit") == resource.CpuLimit.ToString(CultureInfo.InvariantCulture) && entry.Settings.GetValueOrDefault("series_memory_mb") == resource.MemoryMb.ToString(CultureInfo.InvariantCulture)) &&
             (entry.Settings.GetValueOrDefault("image_tag") == image || targets.Length == 1 && !entry.Settings.ContainsKey("image_tag")));
     }
 

@@ -86,7 +86,7 @@ public sealed class RemoteExperimentRunner(RemoteAgentClient? client = null, Rem
     private async Task<(BenchmarkReport Report, string Folder)> ObserveAsync(RemoteJobTicket ticket, Action<RunUpdate>? update, CancellationToken token)
     {
         var report = Initial(ticket);
-        var total = ticket.Config.EngineIds.Count * ticket.Config.Targets.Count * ticket.Config.DatasetRows.Count * ticket.Config.CaseClients().Count * ticket.Config.Repeats;
+        var total = ticket.Config.EngineIds.Count * ticket.Config.Targets.Count * ticket.Config.DatasetRows.Count * ticket.Config.CaseClients().Count * ticket.Config.Repeats * ticket.Config.ResourceCases().Count;
         var completed = 0; long offset = 0; var retries = 0; var cancelling = false; var terminalState = "failed";
         using var stopDeadline = new CancellationTokenSource();
         await _store.SaveAsync(ticket with { Status = "running" });
@@ -211,6 +211,7 @@ public sealed class RemoteExperimentRunner(RemoteAgentClient? client = null, Rem
 
     private static void ValidateRow(PhaseResult row, BenchmarkConfig config)
     {
+        if (!config.ResourceCases().Contains(row.Resource)) throw new InvalidDataException("Сервер вернул другой профиль ресурсов.");
         if (!config.EngineIds.Contains(row.Engine) || !config.Targets.Contains(row.Target) || !config.DatasetRows.Contains(row.DatasetRows) || row.Repeat < 1 || row.Repeat > config.Repeats)
             throw new InvalidDataException("Сервер вернул измерения другого задания.");
         if (config.CustomWorkload is { } workload ? !WorkloadPhases.All(workload).Contains(row.Phase) :

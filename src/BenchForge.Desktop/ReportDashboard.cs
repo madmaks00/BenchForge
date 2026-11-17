@@ -20,7 +20,7 @@ internal sealed record StageChoice(int Number, LoadStage Stage)
     public override string ToString() => $"{Number}. {Stage.Name} · {Stage.Clients} кл.";
 }
 public sealed record MeasurementRow(PhaseResult Source, string Database, string Engine, string Operation, string Rows, string Clients, string Repeat,
-    string Rate, string P99, string Errors, string State, string ClientRam, string ServerRam, string ClientCpu, string ServerCpu, string Gc, string Dropped, string Written);
+    string Rate, string P99, string Errors, string State, string ClientRam, string ServerRam, string ClientCpu, string ServerCpu, string Gc, string Dropped, string Written, string Limits);
 
 public sealed class ReportDashboard : UserControl
 {
@@ -33,8 +33,10 @@ public sealed class ReportDashboard : UserControl
     private readonly ComboBox _rows = new();
     private readonly ComboBox _clients = new();
     private readonly ComboBox _stage = new();
+    private readonly ComboBox _resource = new();
+    private readonly Control _resourceFilter;
     private readonly ComboBox _metric = new();
-    private readonly ComboBox _axis = new() { ItemsSource = new[] { "Число клиентов", "Объём данных" }, SelectedIndex = 0 };
+    private readonly ComboBox _axis = new() { ItemsSource = new[] { "Число клиентов", "Объём данных", "Лимит CPU", "Лимит памяти" }, SelectedIndex = 0 };
     private readonly ComboBox _comparison = new() { ItemsSource = new[] { "Базы данных", "Движки" }, SelectedIndex = 0 };
     private readonly ComboBox _engine = new();
     private readonly ComboBox _database = new();
@@ -69,6 +71,7 @@ public sealed class ReportDashboard : UserControl
         _nav = new[] { "Сравнение", "Масштабирование", "Измерения" }
             .Select((name, index) => SidebarButton(name, () => SelectedPage = index)).ToArray();
 
+        _resourceFilter = SidebarField("Ресурсы базы", _resource);
         _phaseFilter = SidebarField("Операция", _phase);
         _clientsFilter = SidebarField("Клиентов", _clients);
         _stageFilter = SidebarField("Этап нагрузки", _stage);
@@ -77,7 +80,7 @@ public sealed class ReportDashboard : UserControl
         _comparisonFilter = SidebarField("Сравнивать", _comparison);
         _engineFilter = SidebarField("Движок", _engine);
         _databaseFilter = SidebarField("База данных", _database);
-        _filters = Ui.Stack(10, _comparisonFilter, _engineFilter, _databaseFilter, _phaseFilter, SidebarField("Записей", _rows), _clientsFilter, _stageFilter, _metricFilter, _axisFilter);
+        _filters = Ui.Stack(10, _comparisonFilter, _engineFilter, _databaseFilter, _resourceFilter, _phaseFilter, SidebarField("Записей", _rows), _clientsFilter, _stageFilter, _metricFilter, _axisFilter);
 
         var sidebar = Ui.Stack(12, back, Ui.Stack(5, _title, _targets, _meta), Ui.Rule(), Ui.Stack(3, _nav),
             Ui.Rule(), _filters, folder);
@@ -88,7 +91,7 @@ public sealed class ReportDashboard : UserControl
             new MetricChoice(AnalysisMetric.ErrorPercent, "Доля ошибок"), new MetricChoice(AnalysisMetric.DropPercent, "Доля пропусков"),
             new MetricChoice(AnalysisMetric.EndToEndP99, "p99 с ожиданием") };
         _metric.SelectedIndex = 0; _detailPage = BuildDetails(); Content = root;
-        foreach (var box in new[] { _phase, _rows, _clients, _stage, _metric, _axis, _comparison, _engine, _database }) box.SelectionChanged += (_, _) => { if (!_updating) RefreshNow(); };
+        foreach (var box in new[] { _phase, _rows, _clients, _stage, _metric, _axis, _comparison, _engine, _database, _resource }) box.SelectionChanged += (_, _) => { if (!_updating) RefreshNow(); };
         AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(RefreshNow);
         _updating = false; RefreshNow();
     }
@@ -123,9 +126,13 @@ public sealed class ReportDashboard : UserControl
         }
         return Scope(new(phase, rows, _clients.SelectedItem is int clients ? clients : 1));
     }
-    private ReportSlice Scope(ReportSlice slice) => _comparison.SelectedIndex == 1
-        ? slice with { Target = (_database.SelectedItem as TargetChoice)?.Id ?? _report.Config.Targets.FirstOrDefault() }
-        : slice with { Engine = (_engine.SelectedItem as EngineChoice)?.Id ?? _report.Config.EngineIds.FirstOrDefault() ?? "csharp" };
+    private ReportSlice Scope(ReportSlice slice)
+    {
+        slice = slice with { Resource = _resource.SelectedItem as ResourceLimits };
+        return _comparison.SelectedIndex == 1
+            ? slice with { Target = (_database.SelectedItem as TargetChoice)?.Id ?? _report.Config.Targets.FirstOrDefault() }
+            : slice with { Engine = (_engine.SelectedItem as EngineChoice)?.Id ?? _report.Config.EngineIds.FirstOrDefault() ?? "csharp" };
+    }
     private AnalysisMetric Metric => (_metric.SelectedItem as MetricChoice)?.Id ?? AnalysisMetric.Rate;
     public void SetReport(BenchmarkReport report)
     {
@@ -159,6 +166,8 @@ public sealed class ReportDashboard : UserControl
         try
         {
             var previous = Slice;
+            var resources = _report.Config.ResourceSeries.Concat(_data.Select(row => row.Resource).OfType<ResourceLimits>()).Distinct().ToArray();
+            _resource.ItemsSource = resources; _resource.SelectedItem = resources.FirstOrDefault(resource => resource == previous.Resource) ?? resources.FirstOrDefault();
             var previousStage = (_stage.SelectedItem as StageChoice)?.Number;
             var previousEngine = (_engine.SelectedItem as EngineChoice)?.Id;
             var previousTarget = (_database.SelectedItem as TargetChoice)?.Id;
@@ -189,6 +198,7 @@ public sealed class ReportDashboard : UserControl
     }
     private void RefreshPage()
     {
+        _resourceFilter.IsVisible = _report.Config.ResourceSeries.Count > 0 && !(_selectedPage == 1 && _axis.SelectedIndex >= 2);
         _phaseFilter.IsVisible = _selectedPage != 2; _filters.IsVisible = _selectedPage != 2 || _all.IsChecked != true;
         var planned = _report.Config.Plan;
         var hasMultipleStages = planned?.Stages.Count > 1;
@@ -196,9 +206,9 @@ public sealed class ReportDashboard : UserControl
         _nav[1].Content = scalingTitle;
         AutomationProperties.SetName(_nav[1], scalingTitle);
         _clientsFilter.IsVisible = planned is null;
-        _stageFilter.IsVisible = hasMultipleStages && (_selectedPage == 2 || (_selectedPage == 0 && !ReportAnalysis.SetupPhase(Slice.Phase)));
+        _stageFilter.IsVisible = hasMultipleStages && (_selectedPage == 2 || _selectedPage == 1 && _axis.SelectedIndex >= 2 || (_selectedPage == 0 && !ReportAnalysis.SetupPhase(Slice.Phase)));
         _metricFilter.IsVisible = _selectedPage == 0 && _data.Length > 0;
-        _axisFilter.IsVisible = _selectedPage == 1 && !hasMultipleStages;
+        _axisFilter.IsVisible = _selectedPage == 1;
         var manyEngines = _report.Config.EngineIds.Concat(_data.Select(row => row.Engine)).Distinct().Count() > 1;
         _comparisonFilter.IsVisible = manyEngines;
         _engineFilter.IsVisible = manyEngines && _comparison.SelectedIndex == 0;
@@ -338,6 +348,7 @@ public sealed class ReportDashboard : UserControl
     private Control BuildScaling()
     {
         var slice = Slice; var byRows = _axis.SelectedIndex == 1;
+        if (_axis.SelectedIndex >= 2) return BuildResourceCharts(slice);
         if (_report.Config.Plan is { Stages.Count: > 1 } plan)
         {
             if (ReportAnalysis.SetupPhase(slice.Phase))
@@ -407,7 +418,7 @@ public sealed class ReportDashboard : UserControl
             ("Статус", nameof(MeasurementRow.State), new DataGridLength(98))
         })
             _table.Columns.Add(new DataGridTextColumn { Header = header, Binding = new Binding(property), Width = width, MinWidth = width.IsStar ? 160 : 40 });
-        foreach (var (header, property) in new[] { ("Записей", nameof(MeasurementRow.Rows)), ("Клиентов", nameof(MeasurementRow.Clients)) })
+        foreach (var (header, property) in new[] { ("Записей", nameof(MeasurementRow.Rows)), ("Клиентов", nameof(MeasurementRow.Clients)), ("Лимиты CPU / RAM", nameof(MeasurementRow.Limits)) })
         { var column = new DataGridTextColumn { Header = header, Binding = new Binding(property), IsVisible = false }; _conditionColumns.Add(column); _table.Columns.Add(column); }
         foreach (var (header, property) in new[] { ("RAM генератора, МБ", nameof(MeasurementRow.ClientRam)), ("RAM базы, МБ", nameof(MeasurementRow.ServerRam)),
             ("CPU генератора, %", nameof(MeasurementRow.ClientCpu)), ("CPU базы, %", nameof(MeasurementRow.ServerCpu)), ("GC, мс", nameof(MeasurementRow.Gc)),
@@ -418,6 +429,21 @@ public sealed class ReportDashboard : UserControl
         _table.SelectionChanged += (_, _) => { if (_table.SelectedItem is MeasurementRow row) { _detailText.Text = Describe(row.Source); if (!_refreshingDetails) _detailDrawer.IsExpanded = true; } };
         Grid.SetRow(_table, 1); root.Children.Add(_table); _detailDrawer.Content = _detailText; Grid.SetRow(_detailDrawer, 3); root.Children.Add(_detailDrawer); return root;
     }
+    private Control BuildResourceCharts(ReportSlice slice)
+    {
+        var byMemory = _axis.SelectedIndex == 3;
+        Control Chart(AnalysisMetric metric)
+        {
+            var description = ReportAnalysis.Describe(metric, slice.Phase);
+            var chart = new ScalingChart();
+            chart.SetData(ReportAnalysis.ResourceTrends(_data, slice, metric, byMemory), description, false, byMemory ? "Память, МБ" : "CPU");
+            return Ui.Card(Ui.Stack(10, Ui.Label(description.Title, 17, Ui.Text, true), Ui.Label(description.Unit, 12), chart));
+        }
+        return Ui.Stack(16, Ui.Label(byMemory ? "Как влияет память базы" : "Как влияет число CPU", 20, Ui.Text, true),
+            Ui.Label("Каждая линия сохраняет второй ресурс неизменным. Точки — медианы корректных повторов; показан наблюдавшийся разброс.", 13),
+            Chart(AnalysisMetric.Rate), Chart(AnalysisMetric.P99));
+    }
+
     private void RefreshDetails()
     {
         _refreshingDetails = true; var selected = (_table.SelectedItem as MeasurementRow)?.Source;
@@ -429,7 +455,7 @@ public sealed class ReportDashboard : UserControl
             ReportAnalysis.Number(ReportAnalysis.Rate(r), ReportAnalysis.RateUnit(r.Phase)), ReportAnalysis.Number(r.ServiceLatency?.P99Ms), ReportAnalysis.Count(r.Errors),
             r.Cancelled ? "Остановлен" : !r.Verified ? "Не проверен" : r.Errors > 0 ? "Есть ошибки" : "Проверен", ReportAnalysis.Number(r.Client?.RssSampledMaxMb),
             ReportAnalysis.Number(r.Server?.MemorySampledMaxMb), ReportAnalysis.Number(r.Client?.CpuPercent), ReportAnalysis.Number(r.Server?.CpuMeanPercent),
-            ReportAnalysis.Number(r.Client?.GcPauseMs), ReportAnalysis.Count(r.Dropped), ReportAnalysis.Number(r.Server?.WrittenMb)));
+            ReportAnalysis.Number(r.Client?.GcPauseMs), ReportAnalysis.Count(r.Dropped), ReportAnalysis.Number(r.Server?.WrittenMb), r.Target == TargetKind.Sqlite ? "В процессе движка" : (r.Resource ?? new ResourceLimits(_report.Config.CpuLimit, _report.Config.MemoryMb)).Label));
         _detailCount.Text = _details.Count + " измерений"; _table.SelectedItem = _details.FirstOrDefault(r => r.Source == selected) ?? _details.FirstOrDefault();
         _refreshingDetails = false;
     }

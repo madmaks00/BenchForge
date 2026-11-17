@@ -17,6 +17,8 @@
 
 `WorkerCatalog.cs` выбирает программу запуска, `WorkerConformance.cs` проверяет одинаковые данные/гистограммы, `WorkerPreparation.cs` запускает сборку зависимостей, `EngineSettings.cs` содержит выбор языков в интерфейсе. [Подготовка движков](../workers/README.md).
 
+Серверный режим находится в `RemoteExperimentRunner.cs`: он передаёт весь эксперимент по SSH, читает события и получает отчёт. `RemoteAgentClient.cs` управляет заданиями, `SshTransport.cs` передаёт команды и файлы, `ServerAgentBundle.cs` собирает комплект исходников, `RemoteJobStore.cs` сохраняет сведения для повторного подключения. В `server/` находятся Dockerfile и сценарии Linux-агента; `RemoteServerSettings.cs` содержит поля подключения. [Работа с Linux-сервером](remote-server.md).
+
 ## Как проходит запуск теста
 
 1. Пользователь нажимает «Начать эксперимент» в Desktop.

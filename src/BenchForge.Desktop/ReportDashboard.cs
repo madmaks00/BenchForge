@@ -262,7 +262,12 @@ public sealed class ReportDashboard : UserControl
         var conditions = Ui.Stack(12, BuildMetricTable(slice), Ui.Label(ReportAnalysis.PhaseExplanation(slice.Phase)),
             Ui.Label(ComparisonQuality.EnvironmentDescription(_report), 14, Ui.Text), Ui.Label("ОС: " + _report.Environment.GetValueOrDefault("os", "не сохранена") +
             "\nЛогических процессоров: " + _report.Environment.GetValueOrDefault("logical_cpus", "—") + $"\nЛимит серверной БД: {_report.Config.CpuLimit:g} CPU · {_report.Config.MemoryMb:N0} МБ RAM"),
-            Ui.Label("SQLite работает в генераторе; Redis/Valkey, SQL и ClickHouse используют разные профили хранения. Модель CPU и диска в этом отчёте не сохранена.", 13));
+            Ui.Label("CPU: " + _report.Environment.GetValueOrDefault("cpu_model", "модель не сохранена") + "\nRAM окружения: " +
+                (long.TryParse(_report.Environment.GetValueOrDefault("host_visible_memory_bytes"), out var ram) ? $"{ram / (1024d * 1024 * 1024):N1} ГБ" : "не сохранена"), 13),
+            Ui.Label("SQLite работает в генераторе; Redis/Valkey, SQL и ClickHouse используют разные профили хранения. Характеристики диска не собираются.", 13));
+        if (_report.Config.RemoteServer is { } server)
+            conditions.Children.Add(Ui.Label("Сервер: " + server.DisplayName + " · " + _report.Environment.GetValueOrDefault("remote_host", server.Host) +
+                "\nГенератор и временная БД используют ресурсы этого сервера. Сетевая задержка от ПК до сервера в запросы не включена.", 13));
         if (_report.Config.VirtualMachine is not null)
             conditions.Children.Add(Ui.Label("База и генератор находятся в одной VM. Физическое железо и кэши основного компьютера остаются общими.", 13));
         if (_report.Failures.Count > 0 || _report.Warnings.Count > 0) conditions.Children.Add(Ui.Label(string.Join("\n", _report.Failures.Concat(_report.Warnings)), 13, Ui.Amber));

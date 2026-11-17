@@ -13,6 +13,7 @@ internal sealed class EngineSettings : UserControl
     private readonly TextBox _journal = new() { IsReadOnly = true, AcceptsReturn = true, Height = 130, TextWrapping = Avalonia.Media.TextWrapping.Wrap, FontSize = 12 };
     private readonly TextBlock _status = Ui.Label("C# выбран по умолчанию. Для остальных языков один раз подготовьте зависимости.", 13);
     private CancellationTokenSource? _preparing;
+    private Button? _prepareButton, _checkButton;
     public EngineSettings()
     {
         var choices = new WrapPanel { Orientation = Orientation.Horizontal };
@@ -24,6 +25,7 @@ internal sealed class EngineSettings : UserControl
         }
         var prepare = Ui.Button("Подготовить выбранные движки");
         var check = Ui.Button("Проверить движки", "quiet");
+        _prepareButton = prepare; _checkButton = check;
         prepare.Click += async (_, _) =>
         {
             if (_preparing is { } active) { active.Cancel(); return; }
@@ -59,6 +61,13 @@ internal sealed class EngineSettings : UserControl
     }
     public void Apply(IEnumerable<string> selected)
     { var values = selected.ToHashSet(); foreach (var (id, choice) in _choices) choice.IsChecked = values.Contains(id); }
+    public void SetRemoteMode(bool remote)
+    {
+        if (_prepareButton is not null) _prepareButton.IsVisible = !remote;
+        if (_checkButton is not null) _checkButton.IsVisible = !remote;
+        _status.Text = remote ? "Выбранные движки подготавливаются на Linux-сервере в разделе «Окружение тестирования». Устанавливать их на этот ПК не требуется."
+            : "C# готов после сборки. Остальные движки можно подготовить на этом компьютере.";
+    }
     private void Append(string message) => Dispatcher.UIThread.Post(() =>
     { var text = _journal.Text + message + Environment.NewLine; _journal.Text = text.Length > 30_000 ? text[^25_000..] : text; _journal.CaretIndex = _journal.Text.Length; });
 }

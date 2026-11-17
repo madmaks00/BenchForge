@@ -51,6 +51,7 @@ public sealed class RunView : UserControl
     public void Begin(BenchmarkConfig config)
     {
         _title.Text = "Подготовка эксперимента"; _subtitle.Text = string.Join(" · ", config.Targets.Select(t => Catalog.Get(t).Name)) + " · " + string.Join(" / ", config.EngineIds.Select(Engines.Name));
+        if (config.RemoteServer is { } server) _subtitle.Text = "Сервер: " + server.DisplayName + " · " + _subtitle.Text;
         _journal.Text = ""; _latest.Clear(); _recent.Children.Clear(); _errorCount = 0; _errors.Text = "0";
         _stopping = false; _errors.Foreground = Ui.B(Ui.Text);
         _count.Text = "0 / —"; _progress.Value = 0; _progress.IsIndeterminate = true;
@@ -88,8 +89,9 @@ public sealed class RunView : UserControl
     public void Finish(string status, bool hasResults)
     {
         _timer.Stop(); UpdateElapsed(); _activity.Running = false; _progress.IsIndeterminate = false; _stop.IsVisible = false; _result.IsVisible = hasResults;
-        _title.Text = status switch { "completed" => "Эксперимент завершён", "cancelled" => "Эксперимент остановлен", "partial" or "completed_with_errors" => "Завершено с замечаниями", _ => "Не удалось завершить эксперимент" };
-        _subtitle.Text = hasResults ? "Отчёт сохранён. Можно перейти к сравнению." : "Подробности доступны в журнале запуска.";
+        _title.Text = status switch { "completed" => "Эксперимент завершён", "cancelled" => "Эксперимент остановлен", "disconnected" => "Связь с сервером прервана", "partial" or "completed_with_errors" => "Завершено с замечаниями", _ => "Не удалось завершить эксперимент" };
+        _subtitle.Text = status == "disconnected" ? "Задание могло продолжить работу на сервере. В настройках окружения нажмите «Продолжить наблюдение»."
+            : hasResults ? "Отчёт сохранён. Можно перейти к сравнению." : "Подробности доступны в журнале запуска.";
         if (status == "completed") _progress.Value = _progress.Maximum;
     }
     private void UpdateElapsed() { var elapsed = DateTimeOffset.UtcNow - _started; _elapsed.Text = elapsed.TotalHours >= 1 ? elapsed.ToString(@"h\:mm\:ss") : elapsed.ToString(@"mm\:ss"); }

@@ -71,12 +71,17 @@ public sealed record BenchmarkConfig
     public Dictionary<TargetKind, string> ImageOverrides { get; init; } = [];
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public VirtualMachineOptions? VirtualMachine { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public RemoteServerOptions? RemoteServer { get; init; }
 
     public void Validate()
     {
         if (EngineIds is null || EngineIds.Count == 0 || EngineIds.Distinct().Count() != EngineIds.Count || EngineIds.Any(id => !Engines.All.Any(engine => engine.Id == id)))
             throw new ArgumentException("Выберите движки без повторов: C#, Java, Python, Rust, Node.js или Go.");
         VirtualMachine?.Validate();
+        RemoteServer?.Validate();
+        if (VirtualMachine is not null && RemoteServer is not null)
+            throw new ArgumentException("Выберите одно окружение: локальную VM или Linux-сервер.");
         if (VirtualMachine is { } vm && Targets.Any(target => target != TargetKind.Sqlite) && CpuLimit > vm.Cpus)
             throw new ArgumentException("Лимит CPU базы должен помещаться в число CPU виртуальной машины.");
         if (Targets.Count == 0 || Targets.Distinct().Count() != Targets.Count || Targets.Any(t => !Enum.IsDefined(t)))

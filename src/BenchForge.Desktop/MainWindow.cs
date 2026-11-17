@@ -8,6 +8,7 @@ using Avalonia.Controls.Chrome;
 using Avalonia.Controls.Presenters;
 using Avalonia.Input;
 using Avalonia.Layout;
+using Avalonia.LogicalTree;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Media.Immutable;
@@ -98,6 +99,15 @@ public sealed class MainWindow : Window
         _notice.Margin = new Thickness(40, 0, 40, 14); _notice.IsVisible = false; Grid.SetRow(_notice, 3); root.Children.Add(_notice);
         Content = root;
         _setup.StartRequested += async config => await StartAsync(config); _setup.SaveRequested += async config => await SaveConfigAsync(config);
+        _setup.ResumeRequested += async server =>
+        {
+            try
+            {
+                var previous = new RemoteJobStore().Latest(server) ?? throw new InvalidOperationException("Для этого сервера нет незавершённых заданий.");
+                await StartAsync(previous.Config with { RemoteServer = server }, resume: true);
+            }
+            catch (Exception error) { Notice(error.Message); }
+        };
         _run.StopRequested += Stop;
         _run.ResultsRequested += () => { if (_lastRun is { } report) ShowReport(report, _runFolder); };
         _dashboard.LibraryRequested += async () => { _reportHost.Content = _library; Navigate(2); await _library.RefreshAsync(); };
@@ -162,15 +172,18 @@ public sealed class MainWindow : Window
         Navigate(2);
     }
     private void Notice(string message) { _notice.Text = message; _notice.IsVisible = true; _noticeTimer.Stop(); _noticeTimer.Start(); }
-    private async Task StartAsync(BenchmarkConfig config)
+    private async Task StartAsync(BenchmarkConfig config, bool resume = false)
     {
         if (_running) return;
         _cancellation?.Dispose();
         var cancellation = new CancellationTokenSource();
         _cancellation = cancellation; _running = true; _lastRun = null; _runFolder = null;
         _setup.SetBusy(true); _nav[0].IsEnabled = false; _run.Begin(config); _nav[1].Content = "Выполнение  ·"; Navigate(1);
-        var runner = new ExperimentRunner(update => Dispatcher.UIThread.Post(() => { if (_cancellation == cancellation && _running) Receive(update); }));
-        var task = Task.Run(async () => (await runner.RunAsync(config, _reportsRoot, cancellation.Token)).Report);
+        Action<RunUpdate> changed = update => Dispatcher.UIThread.Post(() => { if (_cancellation == cancellation && _running) Receive(update); });
+        var runner = new ExperimentRunner(changed);
+        var task = Task.Run(async () => resume
+            ? (await new RemoteExperimentRunner().ResumeAsync(config.RemoteServer!, changed, cancellation.Token)).Report
+            : (await runner.RunAsync(config, _reportsRoot, cancellation.Token)).Report);
         _active = task;
         var status = "failed";
         try { _lastRun = await task; status = _lastRun.Status; }
@@ -300,6 +313,14 @@ public sealed class MainWindow : Window
         var screenshot = Environment.GetEnvironmentVariable("DBLAB_SCREENSHOT");
         async Task Snapshot(string name) { await Task.Delay(350); if (screenshot is not null) Capture(Path.Combine(Path.GetDirectoryName(screenshot)!, Path.GetFileNameWithoutExtension(screenshot) + "-" + name + ".png")); }
         for (var step = 0; step < 3; step++) { Navigate(0); _setup.GoTo(step); await Snapshot("setup-" + (step + 1)); }
+        if (report.Config.RemoteServer is not null)
+        {
+            Navigate(0); _setup.GoTo(1);
+            var environment = _setup.GetLogicalDescendants().OfType<Expander>().Single(item => item.Header as string == "Окружение тестирования");
+            environment.IsExpanded = true; await Task.Delay(150);
+            environment.BringIntoView(); await Snapshot("server-settings");
+            if (_setup.ReadConfig().RemoteServer != report.Config.RemoteServer) throw new InvalidOperationException("Server settings were lost in UI");
+        }
         _reportHost.Content = _library; Navigate(2); await _library.RefreshAsync(); await Snapshot("library");
         ShowReport(report, Path.GetDirectoryName(path));
         for (var page = 0; page < 3; page++) { _dashboard.SelectedPage = page; await Snapshot(new[] { "compare", "scaling", "measurements" }[page]); }

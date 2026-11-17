@@ -1,4 +1,27 @@
 <Project>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'BenchForge.Desktop' Or '$(MSBuildProjectName)' == 'BenchForge.Cli'">
+    <ServerSourceFiles Include="$(MSBuildThisFileDirectory)Directory.Build.props;$(MSBuildThisFileDirectory)Directory.Build.targets;$(MSBuildThisFileDirectory)global.json;$(MSBuildThisFileDirectory)NuGet.Config;
+        $(MSBuildThisFileDirectory)server/Agent.Dockerfile;$(MSBuildThisFileDirectory)server/*.sh;
+        $(MSBuildThisFileDirectory)src/BenchForge.Contracts/**/*.cs;$(MSBuildThisFileDirectory)src/BenchForge.Contracts/*.csproj;$(MSBuildThisFileDirectory)src/BenchForge.Contracts/packages.lock.json;
+        $(MSBuildThisFileDirectory)src/BenchForge.Coordinator/**/*.cs;$(MSBuildThisFileDirectory)src/BenchForge.Coordinator/*.csproj;$(MSBuildThisFileDirectory)src/BenchForge.Coordinator/packages.lock.json;
+        $(MSBuildThisFileDirectory)src/BenchForge.Cli/**/*.cs;$(MSBuildThisFileDirectory)src/BenchForge.Cli/*.csproj;$(MSBuildThisFileDirectory)src/BenchForge.Cli/packages.lock.json;
+        $(MSBuildThisFileDirectory)src/BenchForge.Worker.CSharp/**/*.cs;$(MSBuildThisFileDirectory)src/BenchForge.Worker.CSharp/*.csproj;$(MSBuildThisFileDirectory)src/BenchForge.Worker.CSharp/packages.lock.json;
+        $(MSBuildThisFileDirectory)workers/prepare.sh;$(MSBuildThisFileDirectory)workers/install-linux.sh;
+        $(MSBuildThisFileDirectory)workers/java/pom.xml;$(MSBuildThisFileDirectory)workers/java/src/**/*.java;
+        $(MSBuildThisFileDirectory)workers/python/*.py;$(MSBuildThisFileDirectory)workers/python/requirements.lock.txt;
+        $(MSBuildThisFileDirectory)workers/node/*.mjs;$(MSBuildThisFileDirectory)workers/node/package.json;$(MSBuildThisFileDirectory)workers/node/package-lock.json;
+        $(MSBuildThisFileDirectory)workers/go/*.go;$(MSBuildThisFileDirectory)workers/go/go.mod;$(MSBuildThisFileDirectory)workers/go/go.sum;
+        $(MSBuildThisFileDirectory)workers/rust/Cargo.toml;$(MSBuildThisFileDirectory)workers/rust/Cargo.lock;$(MSBuildThisFileDirectory)workers/rust/build.rs;$(MSBuildThisFileDirectory)workers/rust/src/**/*.rs"
+      Exclude="$(MSBuildThisFileDirectory)src/**/bin/**/*;$(MSBuildThisFileDirectory)src/**/obj/**/*">
+      <SourceRelativePath>$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '%(FullPath)'))</SourceRelativePath>
+    </ServerSourceFiles>
+  </ItemGroup>
+  <Target Name="CopyServerSourcesForBuild" AfterTargets="Build" BeforeTargets="CopyVirtualMachineAgent" Condition="'@(ServerSourceFiles)' != ''">
+    <Copy SourceFiles="@(ServerSourceFiles)" DestinationFiles="@(ServerSourceFiles->'$(TargetDir)server-agent/source/%(SourceRelativePath)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CopyServerSourcesForPublish" AfterTargets="Publish" Condition="'@(ServerSourceFiles)' != ''">
+    <Copy SourceFiles="@(ServerSourceFiles)" DestinationFiles="@(ServerSourceFiles->'$(PublishDir)server-agent/source/%(SourceRelativePath)')" SkipUnchangedFiles="true" />
+  </Target>
   <Target Name="CopyNativeWorkers" AfterTargets="Build" BeforeTargets="CopyVirtualMachineAgent"
           Condition="'$(MSBuildProjectName)' == 'BenchForge.Desktop' Or '$(MSBuildProjectName)' == 'BenchForge.Cli'">
     <ItemGroup>

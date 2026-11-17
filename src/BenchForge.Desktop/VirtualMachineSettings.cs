@@ -8,7 +8,7 @@ namespace BenchForge.Desktop;
 
 internal sealed class VirtualMachineSettings : UserControl
 {
-    private readonly ComboBox _mode = new() { ItemsSource = new[] { "Этот компьютер", "Чистая виртуальная машина" }, SelectedIndex = 0 };
+    private readonly ComboBox _mode = new() { ItemsSource = new[] { "Этот компьютер", "Чистая виртуальная машина", "Linux-сервер" }, SelectedIndex = 0 };
     private readonly TextBox _template = new() { Text = "benchforge-base-v1" };
     private readonly TextBox _cpus = new() { Text = "4" };
     private readonly TextBox _memory = new() { Text = "3072" };
@@ -16,9 +16,15 @@ internal sealed class VirtualMachineSettings : UserControl
     private readonly TextBlock _status = Ui.Label("", 12);
     private readonly Button _prepare = Ui.Button("Подготовить шаблон");
     private CancellationTokenSource? _preparing;
+    private readonly RemoteServerSettings _server;
+    public Func<IReadOnlyCollection<string>> SelectedEngines { get; set; } = () => new[] { "csharp" };
+    public event Action<bool>? RemoteModeChanged;
+    public event Action<RemoteServerOptions>? ResumeRequested;
 
     public VirtualMachineSettings()
     {
+        _server = new RemoteServerSettings(() => SelectedEngines()); _server.Initialize(); _server.IsVisible = false;
+        _server.ResumeRequested += options => ResumeRequested?.Invoke(options);
         foreach (var (control, label) in new (Control, string)[] { (_mode, "Окружение"), (_template, "Шаблон VM"),
             (_cpus, "CPU машины"), (_memory, "Память VM, МБ"), (_disk, "Диск VM, ГБ") })
             AutomationProperties.SetName(control, label);
@@ -28,7 +34,7 @@ internal sealed class VirtualMachineSettings : UserControl
             Ui.Label("Каждый прогон получает отдельную Linux-машину из выключенного шаблона. База и генератор работают внутри неё. После получения отчёта машина удаляется.", 13),
             fields, _prepare, _status);
         details.IsVisible = false;
-        _mode.SelectionChanged += (_, _) => details.IsVisible = _mode.SelectedIndex == 1;
+        _mode.SelectionChanged += (_, _) => { details.IsVisible = _mode.SelectedIndex == 1; _server.IsVisible = _mode.SelectedIndex == 2; RemoteModeChanged?.Invoke(_mode.SelectedIndex == 2); };
         _prepare.Click += async (_, _) =>
         {
             if (_preparing is { } active) { active.Cancel(); return; }
@@ -54,12 +60,12 @@ internal sealed class VirtualMachineSettings : UserControl
                 _mode.IsEnabled = true;
             }
         };
-        Content = Ui.Stack(12, Ui.Field("Окружение", _mode), details);
+        Content = Ui.Stack(12, Ui.Field("Окружение", _mode), details, _server);
     }
 
     public VirtualMachineOptions? Read()
     {
-        if (_mode.SelectedIndex == 0) return null;
+        if (_mode.SelectedIndex != 1) return null;
         if (!int.TryParse(_cpus.Text, out var cpus) || !int.TryParse(_memory.Text, out var memory) || !int.TryParse(_disk.Text, out var disk))
             throw new ArgumentException("Проверьте CPU, память и диск виртуальной машины.");
         var options = new VirtualMachineOptions { Template = _template.Text?.Trim() ?? "", Cpus = cpus, MemoryMb = memory, DiskGb = disk };
@@ -76,4 +82,7 @@ internal sealed class VirtualMachineSettings : UserControl
         _memory.Text = options.MemoryMb.ToString();
         _disk.Text = options.DiskGb.ToString();
     }
+    public RemoteServerOptions? ReadRemote() => _mode.SelectedIndex == 2 ? _server.Read() : null;
+    public void ApplyRemote(RemoteServerOptions? options)
+    { if (options is not null) { _server.Apply(options); _mode.SelectedIndex = 2; } }
 }

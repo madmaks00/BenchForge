@@ -31,9 +31,13 @@ public sealed class ExperimentSetupView : UserControl
     private int _step, _reviewRevision;
     public event Action<BenchmarkConfig>? StartRequested;
     public event Action<BenchmarkConfig>? SaveRequested;
+    public event Action<RemoteServerOptions>? ResumeRequested;
 
     public ExperimentSetupView()
     {
+        _environment.SelectedEngines = _engines.Read;
+        _environment.RemoteModeChanged += _engines.SetRemoteMode;
+        _environment.ResumeRequested += options => ResumeRequested?.Invoke(options);
         var root = new Grid { RowDefinitions = new RowDefinitions { new(GridLength.Auto), _pageRow, new(GridLength.Auto), new(GridLength.Auto) } };
         _steps = new[] { "Базы данных", "Нагрузка", "Проверка" }
             .Select((label, index) => Ui.Button(label, "quiet", () => GoTo(index))).ToArray();
@@ -159,9 +163,11 @@ public sealed class ExperimentSetupView : UserControl
             catch (Exception e) { if (revision == _reviewRevision) { _checkStatus.Text = e.Message; _checkStatus.Foreground = Ui.B(Ui.Amber); } }
             finally { check.IsEnabled = true; }
         };
-        var environmentTitle = config.VirtualMachine is not null ? "Чистая VM на каждый прогон"
+        var environmentTitle = config.RemoteServer is { } server ? "Linux-сервер · " + server.DisplayName
+            : config.VirtualMachine is not null ? "Чистая VM на каждый прогон"
             : config.Targets.All(t => t == TargetKind.Sqlite) ? "SQLite · локальный файл" : "Docker · отдельные тестовые контейнеры";
-        var environmentText = config.VirtualMachine is { } vm ? $"Шаблон {vm.Template}\nМашина: {vm.Cpus} CPU · {vm.MemoryMb:N0} МБ RAM · {vm.DiskGb} ГБ диск"
+        var environmentText = config.RemoteServer is not null ? "Генератор и база работают на сервере. ПК получает прогресс и отчёт. Разрыв связи не останавливает запущенное задание."
+            : config.VirtualMachine is { } vm ? $"Шаблон {vm.Template}\nМашина: {vm.Cpus} CPU · {vm.MemoryMb:N0} МБ RAM · {vm.DiskGb} ГБ диск"
             : config.Targets.All(t => t == TargetKind.Sqlite) ? "База работает внутри генератора нагрузки." : $"На каждую серверную базу: {config.CpuLimit:g} CPU, {config.MemoryMb:N0} МБ памяти.";
         var conditions = Ui.Stack(18, Ui.Label("Окружение", 17, Ui.Text, true),
             Ui.Label(environmentTitle, 14, Ui.Text), Ui.Label(environmentText), check, _checkStatus);
@@ -213,7 +219,7 @@ public sealed class ExperimentSetupView : UserControl
             Clients = [plan.PeakClients], Plan = plan, DurationSeconds = plan.Stages[0].Seconds,
             Repeats = Integer("repeats"), PayloadBytes = Integer("payload"), BatchSize = Integer("batch"),
             WarmupSeconds = Decimal("warmup"), Seed = seed, CpuLimit = Decimal("cpu"), MemoryMb = Integer("memory"),
-            Hotspot = _hotspot.IsChecked == true, Scenarios = operations, VirtualMachine = _environment.Read() };
+            Hotspot = _hotspot.IsChecked == true, Scenarios = operations, VirtualMachine = _environment.Read(), RemoteServer = _environment.ReadRemote() };
         config.Validate(); return config;
     }
     public void SetConfig(BenchmarkConfig config)
@@ -227,6 +233,7 @@ public sealed class ExperimentSetupView : UserControl
         foreach (var (key, value) in values) _fields[key].Text = value;
         _load.Apply(config);
         _environment.Apply(config.VirtualMachine);
+        _environment.ApplyRemote(config.RemoteServer);
         _engines.Apply(config.EngineIds);
         _hotspot.IsChecked = config.Hotspot;
         _scenario.SelectedIndex = config.Scenarios.Count == 1 ? Array.IndexOf(Enum.GetValues<Scenario>(), config.Scenarios[0]) + 2 : config.Plan is null || config.Scenarios.Count > 1 ? 1 : 0;

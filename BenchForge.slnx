@@ -9,6 +9,13 @@
   <Folder Name="/tests/">
     <Project Path="tests/BenchForge.Tests/BenchForge.Tests.csproj" />
   </Folder>
+  <Folder Name="/server/">
+    <File Path="server/Agent.Dockerfile" />
+    <File Path="server/agentctl.sh" />
+    <File Path="server/entrypoint.sh" />
+    <File Path="docs/remote-server.md" />
+    <File Path="configs/remote-server.json" />
+  </Folder>
   <Folder Name="/workers/">
     <File Path="workers/install-linux.sh" />
     <File Path="workers/prepare.ps1" />

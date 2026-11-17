@@ -25,6 +25,13 @@ try
 {
     if (args.Contains("--engines")) { Console.WriteLine(JsonSerializer.Serialize(Engines.All, Json.Pretty)); return 0; }
     if (args.Contains("--worker-vectors")) { Console.WriteLine(JsonSerializer.Serialize(WorkerConformance.Vectors(), Json.Options)); return 0; }
+    if (args.Contains("--verify-workers"))
+    {
+        var languages = Array.IndexOf(args, "--languages");
+        var selected = languages >= 0 && languages + 1 < args.Length ? args[languages + 1].Split(',') : new[] { "csharp" };
+        foreach (var language in selected) await WorkerCatalog.CheckAsync(language, cancellation.Token);
+        return 0;
+    }
     if (args.Contains("--prepare-workers"))
     {
         var languageIndex = Array.IndexOf(args, "--languages");
@@ -34,6 +41,14 @@ try
     }
     if (args.Contains("--targets")) { Console.WriteLine(JsonSerializer.Serialize(Catalog.Targets, Json.Pretty)); return 0; }
     var configIndex = Array.IndexOf(args, "--config");
+    if (args.Contains("--prepare-server"))
+    {
+        if (configIndex < 0 || configIndex + 1 >= args.Length) throw new ArgumentException("Укажите --config с настройками remoteServer.");
+        var preparation = JsonSerializer.Deserialize<BenchmarkConfig>(await File.ReadAllTextAsync(args[configIndex + 1]), Json.Options)!;
+        preparation.Validate();
+        await new RemoteAgentClient().PrepareAsync(preparation.RemoteServer ?? throw new ArgumentException("Не указан remoteServer."), preparation.EngineIds, Console.WriteLine, cancellation.Token);
+        return 0;
+    }
     if (args.Contains("--prepare-vm"))
     {
         var preparation = configIndex >= 0 && configIndex + 1 < args.Length
@@ -48,9 +63,16 @@ try
     else if (configIndex >= 0 && configIndex + 1 < args.Length) config = JsonSerializer.Deserialize<BenchmarkConfig>(await File.ReadAllTextAsync(args[configIndex + 1]), Json.Options)!;
     else
     {
-        Console.WriteLine("BenchForge · native language engines\n--smoke                  Проверка SQLite без Docker\n--config <file.json>      Эксперимент из конфигурации\n--check --config <file>   Проверка готовности\n--prepare-vm             Подготовка шаблона чистой VM\n--prepare-workers        Подготовить движки на этом компьютере\n--languages <ids>        Языки: csharp,java,python,rust,node,go\n--targets / --engines     Поддерживаемые базы и движки\n--reports <directory>     Папка отчётов"); return 0;
+        Console.WriteLine("BenchForge · native language engines\n--smoke                  Проверка SQLite без Docker\n--config <file.json>      Эксперимент из конфигурации\n--check --config <file>   Проверка готовности\n--prepare-vm             Подготовка шаблона чистой VM\n--prepare-workers        Подготовить движки на этом компьютере\n--prepare-server --config FILE  Подготовить Linux-сервер по SSH\n--resume-server --config FILE   Получить текущее задание сервера\n--languages <ids>        Языки: csharp,java,python,rust,node,go\n--targets / --engines     Поддерживаемые базы и движки\n--reports <directory>     Папка отчётов"); return 0;
     }
     config.Validate();
+    if (args.Contains("--resume-server"))
+    {
+        var resumed = await new RemoteExperimentRunner().ResumeAsync(config.RemoteServer ?? throw new ArgumentException("Не указан remoteServer."),
+            change => { if (events) Console.WriteLine(JsonSerializer.Serialize(change, Json.Options)); else if (change.Type == "log") Console.WriteLine(change.Message); }, cancellation.Token);
+        if (!events) Console.WriteLine("Статус: " + resumed.Report.Status + "\nОтчёт: " + Path.Combine(resumed.Folder, "report.json"));
+        return resumed.Report.Status == "completed" ? 0 : resumed.Report.Status == "cancelled" ? 2 : 1;
+    }
     if (args.Contains("--check"))
     { var problems = await ExperimentRunner.PreflightAsync(config, cancellation.Token); foreach (var problem in problems) Console.WriteLine(problem); return problems.Count > 0 ? 1 : 0; }
     var reportsIndex = Array.IndexOf(args, "--reports");

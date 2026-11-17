@@ -1,0 +1,18 @@
+{
+  "engines": ["csharp"],
+  "targets": ["postgreSql", "mySql"],
+  "datasetRows": [10000],
+  "clients": [4],
+  "repeats": 3,
+  "durationSeconds": 20,
+  "warmupSeconds": 3,
+  "scenarios": ["pointRead", "mixed"],
+  "cpuLimit": 2,
+  "memoryMb": 2048,
+  "remoteServer": {
+    "name": "Тестовый Linux-сервер",
+    "host": "benchforge-test",
+    "user": "ubuntu",
+    "port": 22
+  }
+}

@@ -52,7 +52,8 @@ public sealed class ReportLibraryView : UserControl
                 var text = Ui.Stack(7, Ui.Label(heading, 18, Ui.Text, true),
                     Ui.Label($"{report.StartedAt.ToLocalTime():dd MMMM, HH:mm}   ·   {report.Results.Count} измерений   ·   {report.Config.Repeats} повтор(ов)", 13));
                 var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,32,Auto") }; row.Children.Add(text);
-                var badge = Ui.Badge(report.Status switch { "completed" => "Завершён", "cancelled" => "Остановлен", "running" => "Частичный", _ => "С замечаниями" }, report.Status == "completed" ? Ui.Green : Ui.Amber);
+                if (report.Config.RemoteServer is { } server) text.Children.Add(Ui.Label("Сервер: " + server.DisplayName, 12));
+                var badge = Ui.Badge(report.Status switch { "completed" => "Завершён", "cancelled" => "Остановлен", "running" => "Частичный", "disconnected" => "Связь потеряна", _ => "С замечаниями" }, report.Status == "completed" ? Ui.Green : Ui.Amber);
                 badge.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(badge, 1); row.Children.Add(badge);
                 var arrow = Ui.Label("→", 20, Ui.Muted); arrow.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(arrow, 3); row.Children.Add(arrow);
                 var button = Ui.Button(heading, "normal", () => OpenRequested?.Invoke(path)); button.Content = row; button.Padding = new Thickness(24);

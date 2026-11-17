@@ -6,14 +6,21 @@ using BenchForge.Contracts;
 namespace BenchForge.Coordinator;
 
 public sealed record RunUpdate(string Type, string Message = "", PhaseResult? Result = null, int CompletedCases = 0, int TotalCases = 0, string? Folder = null);
-public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHost? workerHost = null, IVirtualMachineCaseRunner? virtualMachines = null)
+public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHost? workerHost = null, IVirtualMachineCaseRunner? virtualMachines = null, IRemoteExperimentRunner? remote = null)
 {
     private readonly IWorkerHost _workerHost = workerHost ?? new WorkerProcess();
     private readonly IVirtualMachineCaseRunner _virtualMachines = virtualMachines ?? new VirtualMachineCaseRunner();
+    private readonly IRemoteExperimentRunner _remote = remote ?? new RemoteExperimentRunner();
     private void Log(string text) => update?.Invoke(new("log", text));
-    public static async Task<List<string>> PreflightAsync(BenchmarkConfig config, CancellationToken token, IVirtualMachineCaseRunner? virtualMachines = null, IWorkerHost? workerHost = null)
+    public static async Task<List<string>> PreflightAsync(BenchmarkConfig config, CancellationToken token, IVirtualMachineCaseRunner? virtualMachines = null, IWorkerHost? workerHost = null, IRemoteExperimentRunner? remote = null)
     {
         var problems = new List<string>();
+        if (config.RemoteServer is not null)
+        {
+            try { await (remote ?? new RemoteExperimentRunner()).CheckAsync(config, token); }
+            catch (Exception error) when (error is not OperationCanceledException) { problems.Add("Сервер недоступен. " + error.Message); }
+            return problems;
+        }
         if (config.VirtualMachine is { } vm)
         {
             try
@@ -42,6 +49,7 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
     public async Task<(BenchmarkReport Report, string Folder)> RunAsync(BenchmarkConfig config, string reportsRoot, CancellationToken token)
     {
         config.Validate();
+        if (config.RemoteServer is not null) return await _remote.RunAsync(config, reportsRoot, update, token);
         var problems = await PreflightAsync(config, token, _virtualMachines, _workerHost);
         if (problems.Count > 0) throw new InvalidOperationException(string.Join(Environment.NewLine, problems));
         var report = new BenchmarkReport { Config = config, Environment = new() { ["os"] = RuntimeInformation.OSDescription,
@@ -52,6 +60,7 @@ public sealed class ExperimentRunner(Action<RunUpdate>? update = null, IWorkerHo
             ["topology"] = "one owned fresh database instance and one native language worker process per case; sequential cases; languages use their own drivers and concurrency models",
             ["database_profile"] = "single node; SQL and MongoDB durable acknowledgements; Redis/Valkey memory-only cache; ClickHouse HTTP MergeTree analytics",
             ["measurements"] = "client CPU/GC are per-phase; load rate includes generation, whose time is also recorded; setup and validation excluded from query timing" } };
+        foreach (var (key, value) in MachineEnvironment.Capture()) report.Environment[key] = value;
         var folder = Path.Combine(Path.GetFullPath(reportsRoot), DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss'Z'") + "-" + report.RunId[..8]);
         Directory.CreateDirectory(folder);
         await ReportStore.SaveAsync(folder, report);

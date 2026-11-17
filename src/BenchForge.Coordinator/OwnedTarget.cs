@@ -33,6 +33,11 @@ public sealed class OwnedTarget(TargetKind target, BenchmarkConfig config, strin
             "--cpus", config.CpuLimit.ToString(CultureInfo.InvariantCulture), "--memory", config.MemoryMb + "m", "--memory-swap", config.MemoryMb + "m",
             "--pids-limit", Math.Max(1024L, (long)peakClients * 4 + 128).ToString(CultureInfo.InvariantCulture), "-p", $"127.0.0.1::{info.Port}" };
         var command = new List<string>();
+        if (Environment.GetEnvironmentVariable("BENCHFORGE_REMOTE_JOB") is { Length: > 0 } job)
+        {
+            RemoteAgentClient.ValidateJob(job);
+            args.AddRange(["--label", "benchforge.job=" + job]);
+        }
         void Env(string name, string value) { environment[name] = value; args.Add("-e"); args.Add(name); }
         switch (target)
         {

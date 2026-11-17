@@ -135,7 +135,10 @@ public static class ComparisonQuality
     public static double? SpreadPercent(SeriesAnalysis item) => item.Values.Length > 1 && item.Median > 0
         ? (item.Maximum - item.Minimum) / item.Median * 100 : null;
 
-    public static string EnvironmentDescription(BenchmarkReport report) => report.Config.VirtualMachine is { } vm
+    public static string EnvironmentDescription(BenchmarkReport report) => report.Config.RemoteServer is { } server
+        ? "Linux-сервер · " + server.DisplayName
+        : report.Environment.GetValueOrDefault("execution_location") == "remote" ? "Linux-сервер · " + report.Environment.GetValueOrDefault("remote_label", "удалённое исполнение")
+        : report.Config.VirtualMachine is { } vm
         ? $"Чистая VM · {vm.Cpus} CPU · {ReportAnalysis.Count(vm.MemoryMb)} МБ RAM"
         : report.Config.Targets.Any(target => target != TargetKind.Sqlite) ? "Этот компьютер · серверные БД в Docker"
         : "Этот компьютер · SQLite в процессе движка";

@@ -183,18 +183,22 @@ public sealed class MainWindow : Window
         _setup.SetBusy(true); _nav[0].IsEnabled = false; _run.Begin(config); _nav[1].Content = "Выполнение  ·"; Navigate(1);
         Action<RunUpdate> changed = update => Dispatcher.UIThread.Post(() => { if (_cancellation == cancellation && _running) Receive(update); });
         var runner = new ExperimentRunner(changed);
-        var task = Task.Run(async () => resume
-            ? (await new RemoteExperimentRunner().ResumeAsync(config.RemoteServer!, changed, cancellation.Token)).Report
-            : (await runner.RunAsync(config, _reportsRoot, cancellation.Token)).Report);
+        var task = Task.Run(async () =>
+        {
+            if (resume) return (await new RemoteExperimentRunner().ResumeAsync(config.RemoteServer!, changed, cancellation.Token)).Report;
+            await new DockerDesktopStartup().EnsureReadyAsync(config, message => changed(new("status", message)), cancellation.Token);
+            return (await runner.RunAsync(config, _reportsRoot, cancellation.Token)).Report;
+        });
         _active = task;
         var status = "failed";
+        string? failure = null;
         try { _lastRun = await task; status = _lastRun.Status; }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { status = "cancelled"; }
-        catch (Exception e) { _run.Log(e.Message); }
+        catch (Exception e) { failure = e.Message; _run.Log(e.Message); }
         finally
         {
             _running = false; _setup.SetBusy(false); _nav[0].IsEnabled = true; _nav[1].Content = "Выполнение";
-            _run.Finish(status, _lastRun is not null);
+            _run.Finish(status, _lastRun is not null, failure);
             if (_selected == 2 && _reportHost.Content == _library) _ = _library.RefreshAsync();
         }
     }
@@ -203,6 +207,10 @@ public sealed class MainWindow : Window
     {
         switch (update.Type)
         {
+            case "status":
+                _run.Status(update.Message, "Тест начнётся после подготовки. Ожидание можно отменить кнопкой «Остановить».");
+                _run.Log(update.Message);
+                break;
             case "log":
                 _run.Log(update.Message);
                 var operation = update.Message.Split(" · ").LastOrDefault();

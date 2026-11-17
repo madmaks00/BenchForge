@@ -87,13 +87,21 @@ public sealed class RunView : UserControl
         var text = (_journal.Text ?? "") + message + Environment.NewLine;
         _journal.Text = text.Length > 250_000 ? text[^200_000..] : text; _journal.CaretIndex = _journal.Text.Length;
     }
-    public void Stopping() { _stop.IsEnabled = false; _stop.Content = "Сохраняю…"; Status("Завершение эксперимента", "Операции завершаются, отчёт сохраняется."); _stopping = true; }
-    public void Finish(string status, bool hasResults)
+    public void Stopping()
+    {
+        _stop.IsEnabled = false;
+        var preparing = _progress.IsIndeterminate;
+        _stop.Content = preparing ? "Отменяю…" : "Сохраняю…";
+        Status(preparing ? "Отмена подготовки" : "Завершение эксперимента", preparing ? "Останавливаем подготовку эксперимента." : "Операции завершаются, отчёт сохраняется.");
+        _stopping = true;
+    }
+    public void Finish(string status, bool hasResults, string? failure = null)
     {
         _timer.Stop(); UpdateElapsed(); _activity.Running = false; _progress.IsIndeterminate = false; _stop.IsVisible = false; _result.IsVisible = hasResults;
         _title.Text = status switch { "completed" => "Эксперимент завершён", "cancelled" => "Эксперимент остановлен", "disconnected" => "Связь с сервером прервана", "partial" or "completed_with_errors" => "Завершено с замечаниями", _ => "Не удалось завершить эксперимент" };
         _subtitle.Text = status == "disconnected" ? "Задание могло продолжить работу на сервере. В настройках окружения нажмите «Продолжить наблюдение»."
             : hasResults ? "Отчёт сохранён. Можно перейти к сравнению." : "Подробности доступны в журнале запуска.";
+        if (failure is not null) _subtitle.Text = failure.Length <= 500 ? failure : failure[..500] + "… Подробности в журнале.";
         if (status == "completed") _progress.Value = _progress.Maximum;
     }
     private void UpdateElapsed() { var elapsed = DateTimeOffset.UtcNow - _started; _elapsed.Text = elapsed.TotalHours >= 1 ? elapsed.ToString(@"h\:mm\:ss") : elapsed.ToString(@"mm\:ss"); }

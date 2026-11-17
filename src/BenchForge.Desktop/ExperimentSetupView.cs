@@ -117,7 +117,7 @@ public sealed class ExperimentSetupView : UserControl
             grid.Children.Add(button);
         }
         return Ui.Scroll(Ui.Stack(14, Ui.Label("Выберите базы для тестирования", 18, Ui.Text, true), grid,
-            Ui.Label("SQLite и DuckDB работают без Docker. Серверным базам нужен Docker с Linux-контейнерами на выбранном компьютере или сервере.", 13)));
+            Ui.Label("SQLite и DuckDB работают без Docker. Для локального серверного теста Docker Desktop запустится автоматически. В Docker нужен режим Linux-контейнеров.", 13)));
     }
 
     private void PaintDatabase(TargetKind target)
@@ -184,7 +184,7 @@ public sealed class ExperimentSetupView : UserControl
             : config.Targets.All(Catalog.Embedded) ? "Встраиваемые базы · локальные файлы" : "Docker · отдельные тестовые контейнеры";
         var environmentText = config.RemoteServer is not null ? "Генератор и база работают на сервере. ПК получает прогресс и отчёт. Разрыв связи не останавливает запущенное задание."
             : config.VirtualMachine is { } vm ? $"Шаблон {vm.Template}\nМашина: {vm.Cpus} CPU · {vm.MemoryMb:N0} МБ RAM · {vm.DiskGb} ГБ диск"
-            : config.Targets.All(Catalog.Embedded) ? "База работает внутри генератора нагрузки." : $"На каждую серверную базу: {config.CpuLimit:g} CPU, {config.MemoryMb:N0} МБ памяти.";
+            : config.Targets.All(Catalog.Embedded) ? "База работает внутри генератора нагрузки." : $"На каждую серверную базу: {config.CpuLimit:g} CPU, {config.MemoryMb:N0} МБ памяти.\nЕсли Docker Desktop выключен, BenchForge запустит его перед тестом и дождётся готовности.";
         var conditions = Ui.Stack(18, Ui.Label("Окружение", 17, Ui.Text, true),
             Ui.Label(environmentTitle, 14, Ui.Text), Ui.Label(environmentText), check, _checkStatus);
         var save = Ui.Button("Сохранить настройки", "quiet", () => SaveRequested?.Invoke(ReadConfig())); save.HorizontalAlignment = HorizontalAlignment.Left;

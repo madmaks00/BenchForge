@@ -22,7 +22,11 @@ internal static class VirtualMachineWorkers
         if (prepared?.Version != WorkerCatalog.BundleVersion || engines.Any(id => !prepared.Engines.Contains(id)))
             throw new InvalidOperationException("Для выбранных языков обновите шаблон VM кнопкой «Подготовить шаблон» в окружении тестирования.");
     }
-    internal static void Invalidate(VirtualMachineOptions options) => File.Delete(Manifest(options.Template));
+    internal static void Invalidate(VirtualMachineOptions options)
+    {
+        try { File.Delete(Manifest(options.Template)); }
+        catch (DirectoryNotFoundException) { /* A fresh installation has no cache to invalidate. */ }
+    }
 
     internal static async Task CheckStorageAsync(VirtualMachineOptions options, CancellationToken token)
     {
